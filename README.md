@@ -1,294 +1,195 @@
+# Project overview — what each file does (short, exact)
 
-# Fruit Freshness Detection using Classical Computer Vision & SVM
+**`extract_features.py`**
 
-A **classical computer vision + machine learning** project that classifies **fruit type** (`apple`, `banana`, `orange`) and predicts **freshness** (`fresh` / `rotten`) using a **handcrafted feature pipeline** and **Support Vector Machines (SVM)**.
+* Low-level feature extraction for a single image and batch helpers.
+* Exposes:
 
-This project intentionally avoids deep learning to emphasize **interpretability**, **data discipline**, and **reproducibility**.
+  * `model` — EfficientNetB0 (include_top=False, pooling='avg')
+  * `preprocess_input` — EfficientNet preprocessing function
+  * `extract_handcrafted(img)` — returns 32 handcrafted features from an RGB image array
+  * `extract_deep_batch(paths, batch_size)` — run EfficientNet on a list of image paths (batched) → returns `(N,1280)` array
+  * `extract_features(path)` — convenience: reads a single path → deep(1280) + handcrafted(32) → 1312-d vector
+* Input: image file path(s).
+* Output: NumPy arrays of features.
+
+**`extract_dataset_features.py`**
+
+* Full dataset feature building script (deterministic, robust).
+* Scans `vegetable_Dataset/`, filters by `TARGET_VEGETABLES`, loads images (parallelized with threads), runs batched EfficientNet inference using `extract_deep_batch` and computes handcrafted features, concatenates them → saves:
+
+  * `Features/X.npy` (shape: N × 1312)
+  * `Features/y_veg.npy` (N strings)
+  * `Features/y_fresh.npy` (N ints: 1 fresh, 0 rotten)
+* Key behaviors: batching, thread-based image IO, filters non-image files, skips bad images.
+
+**`train_split.py`**
+
+* Create and save a reproducible stratified train/test split (recommended once).
+* Loads `Features/X.npy`, `y_veg`, `y_fresh`. Builds combined stratify label `f"{veg}_{fresh}"` to keep both vegetable and freshness balance. Saves split arrays into `models/`:
+
+  * `models/X_train.npy`, `models/X_test.npy`
+  * `models/y_veg_train.npy`, `models/y_veg_test.npy`
+  * `models/y_fresh_train.npy`, `models/y_fresh_test.npy`
+* Use when you want stable evaluation and to avoid reloading full dataset repeatedly.
+
+**`preprocess_and_rank.py`**
+
+* Feature preprocessing + XGBoost ranking on *standardized raw features* (not PCA-first).
+* Steps (using training split if available, else full Features):
+
+  1. `VarianceThreshold` — remove constant features (fit → saves `variance.joblib`)
+  2. `StandardScaler` — fit on reduced features (saves `scaler.joblib`)
+  3. Fit `xgboost.XGBClassifier` on standardized reduced features vs `y_fresh`
+  4. Compute importances → select top_k indices (saves `selected_features.npy`)
+  5. Save `feature_importances.npy` for inspection
+* Outputs in `models/`: `variance.joblib`, `scaler.joblib`, `selected_features.npy`, `feature_importances.npy`.
+
+**`train_svm.py`**
+
+* Final model training script. Uses preprocessing artifacts to produce optimized inputs and save SVM models:
+
+  * Load train data (`models/X_train.npy` if present, else `Features/X.npy`)
+  * Apply `variance.joblib` → `scaler.joblib` → select `selected_features.npy` → get `X_sel` (final features)
+  * Train LabelEncoder on `y_veg` and save `label_encoder.joblib`
+  * Train two SVM pipelines (each includes an inner `StandardScaler` then `SVC(probability=True, class_weight='balanced')`):
+
+    * `veg_svm.joblib` (multiclass vegetable type)
+    * `fresh_svm.joblib` (binary fresh/rotten with probabilities)
+* Saves models to `models/`.
+
+**`predict_cli.py`**
+
+* Inference CLI for a single image. Workflow:
+
+  1. `extract_features(path)` → 1312 features
+  2. Apply `variance.joblib` → `scaler.joblib` → select features by `selected_features.npy`
+  3. `veg_svm.predict_proba` → choose top class and confidence (LabelEncoder decode)
+  4. `fresh_svm.predict_proba` → `P(fresh)` → `score = P(fresh) * 100`
+  5. `grade = grade_from_score(score)` (utils provides thresholds)
+* Prints: vegetable, veg confidence, freshness probability, score, grade.
+
+**`utils.py`**
+
+* Small helpers and constants:
+
+  * `TARGET_VEGETABLES` set (tomato, carrot, potato, cucumber, capsicum)
+  * `save_model` / `load_model` wrappers (joblib), `ensure_dirs`
+  * `grade_from_score(score)` — mapping score → grade per thresholds.
 
 ---
 
-## 🔗 Dataset (Kaggle)
-
-**Fruit Freshness Dataset (Apple, Banana, Orange)**
-👉 [https://www.kaggle.com/datasets/user2036/fruit-freshness-dataset-v1](https://www.kaggle.com/datasets/user2036/fruit-freshness-dataset-v1)
-
-### Current dataset version: **v2**
-
-* Removed **exact duplicates** (file hash)
-* Removed **perceptual duplicates** (pHash)
-* Verified **no train–test leakage**
-* Cleaned, frozen, and versioned dataset
-
-> All experiments and results in this repository are based strictly on **Kaggle v2**.
-
----
-
-## Key Highlights
-
-* Fully **CPU-friendly** (no GPU, no CNNs)
-* **30-dimensional interpretable handcrafted feature vector**
-* Two independent SVM classifiers:
-
-  * **Fruit classifier** → apple / banana / orange
-  * **Freshness classifier** → fresh / rotten
-* Explicit **dataset sanitation pipeline**
-* **Stratified K-Fold cross-validation**
-* **Learning curve analysis**
-* CLI-based training, evaluation, and prediction
-
----
-
-## Final Project Structure (Accurate)
+# Artifacts produced (files saved on disk)
 
 ```
-mini-project/
-├── clean_dataset/
-│   ├── find_image_duplicates.py
-│   ├── keep_best_train_duplicates.py
-│   └── move_test_leaks.py
-│
-├── dataset/
-│   ├── train/
-│   │   ├── apple/
-│   │   ├── banana/
-│   │   ├── orange/
-│   │   ├── rottenapples/
-│   │   ├── rottenbanana/
-│   │   └── rottenoranges/
-│   ├── test/
-│   │   └── (same structure as train)
-│   └── dataset-metadata.json
-│
-├── duplicates/
-│   ├── leak_groups/
-│   ├── train_groups/
-│   ├── post_clean_check/
-│   └── duplicate_report.csv
-│
-├── models/
-│   ├── fruit_type_svm.joblib
-│   ├── freshness_svm.joblib
-│   ├── label_encoder.joblib
-│   ├── feature_schema.json
-│   ├── confusion_matrix_fruit.png
-│   ├── confusion_matrix_freshness.png
-│   └── learning_curve.png
-│
-├── src/
-│   ├── extract_features.py
-│   ├── train_svm.py
-│   ├── evaluate.py
-│   ├── cross_validation.py
-│   ├── learning_curve.py
-│   ├── predict_cli.py
-│   ├── save_feature_schema.py
-│   └── utils.py
-│
-├── dataset_snapshot.txt
-├── requirements.txt
-└── README.md
+Features/
+    X.npy                # N x 1312 feature matrix
+    y_veg.npy            # N vegetable labels (strings)
+    y_fresh.npy          # N freshness labels (0/1)
+models/
+    X_train.npy          # optional (if you ran train_split)
+    X_test.npy
+    y_veg_train.npy
+    y_veg_test.npy
+    y_fresh_train.npy
+    y_fresh_test.npy
+
+    variance.joblib      # VarianceThreshold fitted on raw features
+    scaler.joblib        # StandardScaler fitted on reduced raw features
+    selected_features.npy# indices (into reduced space) selected by XGBoost
+    feature_importances.npy
+    label_encoder.joblib
+    veg_svm.joblib
+    fresh_svm.joblib
 ```
 
 ---
 
-## Dataset Freezing & Integrity
-
-* `dataset_snapshot.txt` records the **exact directory structure**
-* Duplicate detection performed using:
-
-  * **File hash** → exact duplicates
-  * **Perceptual hash (pHash)** → near-duplicates
-* Post-clean verification confirms:
-
-  * ✅ No remaining duplicates
-  * ✅ No train–test leakage
-* Dataset is treated as **read-only** after freezing
-
----
-
-## Feature Extraction (Frozen Schema)
-
-The system uses a **fixed 30-feature vector**, stored in:
+# Exact workflow mind-map (ASCII, top → bottom)
 
 ```
-models/feature_schema.json
+[ IMAGE FOLDERS ]
+vegetable_Dataset/
+  ├─ FreshTomato/
+  ├─ RottenTomato/
+  ├─ FreshCarrot/
+  └─ ...
+
+         │
+         │  (1) extract_dataset_features.py
+         │     - scan dataset (sorted)
+         │     - parallel image loading (threads)
+         │     - batch deep feature inference (EfficientNetB0)
+         │     - handcrafted features per image
+         ▼
+  Features/X.npy  (N × 1312)   Features/y_veg.npy   Features/y_fresh.npy
+         │
+         │  (optional: one-time) train_split.py
+         │     - stratified split (veg + fresh)
+         │     -> models/X_train.npy, X_test.npy, y_*-train/test.npy
+         ▼
+  models/X_train.npy  (or Features/X.npy if you skip split)
+         │
+         │  (2) preprocess_and_rank.py
+         │     - VarianceThreshold (remove constant features)
+         │     - StandardScaler (fit on reduced raw features)
+         │     - XGBoost on standardized raw features vs y_fresh
+         │     - select top_k feature indices
+         │     -> models/variance.joblib, scaler.joblib, selected_features.npy
+         ▼
+  selected raw features (reduced → standardized → selected)
+         │
+         │  (3) train_svm.py
+         │     - load X (train split or full)
+         │     - apply variance.joblib -> scaler.joblib -> selected indices
+         │     - train LabelEncoder on y_veg --> save label_encoder.joblib
+         │     - train veg_svm (multiclass) --> save veg_svm.joblib
+         │     - train fresh_svm (binary, probability=True) --> save fresh_svm.joblib
+         ▼
+  models/veg_svm.joblib   models/fresh_svm.joblib   label_encoder.joblib
+         │
+         │  (4) predict_cli.py  (inference for a single image)
+         │     - extract_features(path) -> 1312 vector
+         │     - vt.transform -> scaler.transform -> selected indices
+         │     - veg_svm.predict_proba -> veg name + confidence
+         │     - fresh_svm.predict_proba -> P(fresh)
+         │     - score = P(fresh) * 100
+         │     - grade_from_score(score)
+         ▼
+  Output: Vegetable, Veg confidence, Freshness probability, Score, Grade
 ```
 
-### Feature categories
-
-**Color**
-
-* RGB mean & standard deviation
-* HSV circular mean & std
-* LAB mean & std
-
-**Texture**
-
-* Laplacian variance
-* GLCM contrast, energy, homogeneity
-* Grayscale entropy
-
-**Shape**
-
-* Area, perimeter
-* Circularity, solidity
-* Aspect ratio, extent
-
-**Decay**
-
-* Dark pixel ratio
-
-⚠️ Feature order and definitions must not be changed without retraining.
-
 ---
 
-## Segmentation Strategy
-
-1. Convert to grayscale
-2. Gaussian blur
-3. Otsu thresholding
-4. Largest contour selected as fruit mask
-
-If segmentation fails, the pipeline **falls back to whole-image statistics** to avoid crashes.
-
----
-
-## Training
+# Short run commands (exact order to run once)
 
 ```bash
+# 1. extract features (slow; run once)
+python src/extract_dataset_features.py
+
+# 2. create train/test split (optional but recommended)
+python src/train_split.py
+
+# 3. preprocess + feature ranking (fit on train split if exists)
+python src/preprocess_and_rank.py
+
+# 4. train final SVMs
 python src/train_svm.py
-```
 
-**Training set size:** 9,453 images
-
-What happens:
-
-* Feature extraction from `dataset/train`
-* Label encoding for fruit classes
-* GridSearchCV with RBF-kernel SVM
-* Best models saved to `models/`
-
----
-
-## Evaluation
-
-```bash
-python src/evaluate.py
-```
-
-**Test set size:** 1,879 images
-
-### Fruit classification
-
-* Accuracy: **97.98%**
-* Macro F1: **0.98**
-![Fruit Classification Confusion Matrix](models/confusion_matrix_fruit.png)
-
-
-### Freshness classification
-
-* Accuracy: **96.17%**
-* Macro F1: **0.96**
-![Freshness Classification Confusion Matrix](models/confusion_matrix_freshness.png)
-
-
-Confusion matrices are saved to:
-
-```
-models/confusion_matrix_fruit.png
-models/confusion_matrix_freshness.png
+# 5. predict on single image
+python src/predict_cli.py --image path/to/image.jpg
 ```
 
 ---
 
-## Cross-Validation
+# Edge cases, important notes & failure modes (be explicit)
 
-```bash
-python src/cross_validation.py
-```
-
-* **Stratified 5-Fold CV** on training data
-* Mean accuracy: **97.45%**
-* Standard deviation: **0.0036**
-
-This confirms **model stability** and absence of data leakage.
+* **Missing EfficientNet weights / TensorFlow**: first run will download weights. If TF not installed, extraction fails. Confirm `python -c "import tensorflow as tf; print(tf.__version__)"`.
+* **Batch size and RAM**: `extract_dataset_features.py` uses batching and threads. If you run out of RAM, reduce `BATCH_SIZE` and/or `NUM_WORKERS`. On your machine (i7, 16GB) recommended start: `BATCH_SIZE=64`.
+* **Dataset folder naming**: code expects folders named like `FreshTomato` / `RottenTomato` (case-insensitive). If your dataset uses underscores or different naming, update `parse_folder()` accordingly.
+* **Corrupt images**: extractor skips corrupt images but keeps label arrays in parallel — ensure labels / paths remain aligned. The provided scripts handle bad images by skipping and still saving aligned arrays (they keep the same ordering; if an image is skipped your script currently drops that sample — confirm label arrays are trimmed the same way).
+* **PCA**: currently PCA is **not** used by default. If you want further dimension reduction after selection we can add PCA as an optional step.
+* **Interpretability**: XGBoost ranks standardized **raw** reduced features (not PCA components) so you can inspect which original features mattered.
 
 ---
 
-## Learning Curve
-
-```bash
-python src/learning_curve.py
-```
-
-Generates:
-
-
-**Learning Curve (SVM)**
-
-![Learning Curve](models/learning_curve.png)
-
-
-Observations:
-
-* Validation accuracy plateaus after ~60% data
-* Removing ~2,000 duplicates **did not reduce performance**
-* Confirms dataset is **information-sufficient**, not overfitted
-
----
-
-## Prediction (CLI)
-
-```bash
-python src/predict_cli.py --image /absolute/path/to/image.jpg
-```
-
-Example outputs:
-
-```
-Fruit: banana (88.80%)
-Freshness score: 68.79% → FRESH
-```
-
-```
-Fruit: apple (99.88%)
-Freshness score: 0.01% → ROTTEN
-```
-
-The CLI reports **class probabilities**, not just labels.
-
----
-
-## Performance Summary (Clean Dataset)
-
-| Task                     | Accuracy |
-| ------------------------ | -------- |
-| Fruit classification     | ~98%     |
-| Freshness classification | ~96%     |
-
-Results remain **stable after duplicate removal**, validating dataset quality.
-
----
-
-## Known Limitations
-
-* White-background bias in dataset
-* Sensitivity to lighting and color casts
-* Early decay can be visually subtle
-* Classical CV has a bounded ceiling vs deep learning
-
-These are **expected, documented trade-offs**, not bugs.
-
----
-
-## Why Classical CV + SVM?
-
-This project prioritizes:
-
-* Interpretability over raw accuracy
-* Data discipline over brute force
-* Reproducibility over black-box models
-
-It is designed as a **strong baseline** and an **educational reference**.
-
----

@@ -1,8 +1,9 @@
-numpy>=1.24.0
-opencv-python>=4.8.0
-scikit-learn>=1.3.0
-joblib>=1.3.0
-tqdm>=4.66.0
-matplotlib>=3.7.0
-scikit-image
-scipy
+numpy
+scikit-learn
+xgboost
+opencv-python
+pillow
+tqdm
+joblib
+matplotlib
+tensorflow

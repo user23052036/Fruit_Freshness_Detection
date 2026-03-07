@@ -46,6 +46,8 @@ models/*.pkl
 # =========================
 dataset/
 duplicates/
+vegetable_Dataset/
+Notebok/mam_instruction.mp3
 
 # =========================
 # Git metadata safety
