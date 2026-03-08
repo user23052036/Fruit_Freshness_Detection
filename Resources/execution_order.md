@@ -1,169 +1,139 @@
+# REQUIRED execution order (do not skip or reorder)
 
-# 1. Step 1 — Extract Dataset Features
+1. `extract_dataset_features.py` — extract features from images → `Features/`
+2. `train_split.py` — create train/test split → `models/` (X_train.npy exists)
+3. `preprocess_and_rank.py` — remove constant features, scale, XGBoost ranking → save artifacts in `models/`
+4. `train_svm.py` — train the two SVMs using selected features → save models in `models/`
+5. `evaluate_models.py` — evaluate on `X_test.npy` (optional but mandatory for validation)
+6. `visualize_results.py` — plots confusion matrices / feature importance (optional)
+7. `predict_cli.py` — single-image inference
 
-Command:
+Do this order every time you regenerate Features. If you change `Features/X.npy`, rerun steps 2→5.
+
+---
+
+# Exact commands & expected outputs
+
+> Run from repo root (where `src/` folder sits).
+
+## 1) Extract dataset features
 
 ```bash
 python src/extract_dataset_features.py
 ```
 
-What happens internally:
+What it does: loads images (threaded), converts BGR→RGB, resizes 224×224, runs EfficientNet batches + handcrafted features, saves `Features/X.npy`, `Features/y_veg.npy`, `Features/y_fresh.npy`.
+
+Expected console (example):
 
 ```
-Images
-↓
-EfficientNetB0 (1280 features)
-+
-Handcrafted features (32)
-↓
-1312 feature vector per image
-↓
-Saved into Features/
-```
-
-Expected console output:
-
-```text
 Scanning dataset...
-Total images: 36000
-
+Total images: N
 Extracting features...
-
-Batches: 100%|████████████████████████████████| 282/282 [00:25<00:00]
-
-Saved feature matrix: (36000, 1312)
+Batches: 100%|██████████| M/M [00:25<00:00]
+Saved feature matrix: (N, 1312)
 ```
 
 Files created:
 
 ```
 Features/
- ├ X.npy
- ├ y_veg.npy
- └ y_fresh.npy
+ ├ X.npy          # shape (N,1312)
+ ├ y_veg.npy      # shape (N,)
+ └ y_fresh.npy    # shape (N,)
 ```
 
-Example shapes:
+Checks after run:
 
-```
-X.npy → (36000, 1312)
-y_veg.npy → (36000,)
-y_fresh.npy → (36000,)
-```
+* `python -c "import numpy as np; X=np.load('Features/X.npy'); print(X.shape)"`
+* Confirm `(N, 1312)`.
 
 ---
 
-# 2. Step 2 — Train/Test Split
-
-Command:
+## 2) Create train/test split
 
 ```bash
 python src/train_split.py
 ```
 
-What happens:
+What it does: stratified split by combined label (`veg_fresh`) to preserve distribution and saves train/test arrays in `models/`.
+
+Expected console:
 
 ```
-Dataset
-↓
-Stratified split (veg + freshness)
-↓
-80% train
-20% test
-```
-
-Expected output:
-
-```text
 [INFO] Loading Features...
-[SUCCESS] Train/test split created. Train=28800 Test=7200
+[SUCCESS] Train/test split created. Train=TRAIN_COUNT Test=TEST_COUNT
 ```
 
-Files created:
+Files created in `models/`:
 
 ```
-models/
- ├ X_train.npy
- ├ X_test.npy
- ├ y_veg_train.npy
- ├ y_veg_test.npy
- ├ y_fresh_train.npy
- └ y_fresh_test.npy
+X_train.npy, X_test.npy,
+y_veg_train.npy, y_veg_test.npy,
+y_fresh_train.npy, y_fresh_test.npy
 ```
+
+Critical: **Do not continue** to step 3 until `models/X_train.npy` exists. If missing, you will leak.
 
 ---
 
-# 3. Step 3 — Feature Optimization
-
-Command:
+## 3) Preprocess & rank features (XGBoost)
 
 ```bash
 python src/preprocess_and_rank.py
 ```
 
-What happens:
+What it does:
+
+* Loads `models/X_train.npy` (or `Features/X.npy` if you mistakenly skipped step 2 — don’t),
+* VarianceThreshold (removes constant features), StandardScaler (fit on train), XGBoost ranking (gain), selects `top_k` indices, saves artifacts.
+
+Expected console:
 
 ```
-1312 features
-↓
-VarianceThreshold
-↓
-StandardScaler
-↓
-XGBoost ranking
-↓
-Select top 60 features
-```
-
-Expected output:
-
-```text
-[INFO] Using 28800 samples for ranking
-[INFO] VarianceThreshold removed -> 1312 -> 1287
+[INFO] Using TRAIN_COUNT samples for ranking
+[INFO] VarianceThreshold removed -> 1312 -> K_REDUCED
 [DONE] Selected top 60 features
 ```
 
-Files created:
+Files created in `models/`:
 
 ```
-models/
- ├ variance.joblib
- ├ scaler.joblib
- ├ selected_features.npy
- └ feature_importances.npy
+variance.joblib
+scaler.joblib
+selected_features.npy   # indices into the reduced-space
+feature_importances.npy
 ```
+
+Checks:
+
+* `np.load('models/selected_features.npy').shape` should be `(60,)` if default.
+* Confirm `variance.joblib` and `scaler.joblib` exist.
+
+Important: if you want deterministic ranking, `preprocess_and_rank.py` sets `np.random.seed(42)` and XGBoost `random_state=42`.
 
 ---
 
-# 4. Step 4 — Train Models
-
-Command:
+## 4) Train SVMs
 
 ```bash
 python src/train_svm.py
 ```
 
-What happens:
+What it does:
+
+* Loads `models/X_train.npy` (or `Features/X.npy` fallback), applies `variance.joblib` → `scaler.joblib` → selects `selected_features.npy`, trains:
+
+  * vegetable SVM (multiclass)
+  * freshness SVM (binary)
+* Saves `veg_svm.joblib`, `fresh_svm.joblib`, `label_encoder.joblib`.
+
+Expected console:
 
 ```
-Selected features
-↓
-Train two SVM models
-```
-
-Models:
-
-```
-Vegetable classifier
-Freshness classifier
-```
-
-Expected output:
-
-```text
 [INFO] Loading features...
 [INFO] Applying preprocessing pipeline...
-[INFO] Feature matrix after selection: (28800, 60)
+[INFO] Feature matrix after selection: (TRAIN_COUNT, 60)
 
 [INFO] Training vegetable classifier...
 [DONE] Vegetable classifier saved
@@ -172,42 +142,75 @@ Expected output:
 [DONE] Freshness classifier saved
 ```
 
-Files created:
+Files added in `models/`:
 
 ```
-models/
- ├ veg_svm.joblib
- ├ fresh_svm.joblib
- └ label_encoder.joblib
+veg_svm.joblib
+fresh_svm.joblib
+label_encoder.joblib
 ```
+
+Checks:
+
+* `python -c "from joblib import load; load('models/veg_svm.joblib')"` should not error.
+* Quick sanity: run `python src/evaluate_models.py` next.
 
 ---
 
-# 5. Step 5 — Prediction
-
-Command:
+## 5) Evaluate on test split (must run)
 
 ```bash
-python src/predict_cli.py --image test_images/tomato.jpg
+python src/evaluate_models.py
 ```
 
-What happens:
+What it does: loads `models/X_test.npy`, applies preprocessing pipeline, predicts with both models, prints accuracy/precision/recall/F1 and confusion matrices.
+
+Expected console (example):
 
 ```
-Image
-↓
-Feature extraction
-↓
-Preprocessing pipeline
-↓
-SVM prediction
-↓
-Score + grade
+[INFO] Loading test data...
+[INFO] Applying preprocessing pipeline...
+
+========== Vegetable Classification ==========
+Accuracy: 0.93
+Classification Report:
+...
+Confusion Matrix:
+...
+
+========== Freshness Classification ==========
+Accuracy: 0.91
+Classification Report:
+...
+Confusion Matrix:
+...
+```
+
+If scores look **unreasonably high** (e.g., >99%), **stop** — re-check that Step 3 used only train data (no leakage).
+
+---
+
+## 6) Visualization (optional)
+
+```bash
+python src/visualize_results.py
+```
+
+What it does: shows confusion heatmaps and the top-XGBoost importances plot. Requires `matplotlib`, `seaborn`.
+
+Expected: three plots open (vegetable CM, freshness CM, top feature importances).
+
+---
+
+## 7) Single-image prediction
+
+```bash
+python src/predict_cli.py --image path/to/image.jpg
 ```
 
 Expected output example:
 
-```text
+```
 Vegetable: tomato (93.14%)
 Freshness probability: 0.8723
 Score: 87.23
@@ -216,156 +219,76 @@ Grade: Mostly Fresh
 
 ---
 
-# Full Pipeline Summary
+# Optional flags / variants & how to use them
 
-```text
-Image Dataset
-↓
-Feature Extraction
-↓
-X.npy (1312 features)
-↓
-Train/Test Split
-↓
-Feature Optimization
-↓
-Top 60 features
-↓
-Train SVM models
-↓
-Prediction
-↓
-Score + Grade
-```
+> Many scripts currently take parameters via editing the `main(...)` call or function arguments. Quick options:
 
----
+### Change number of selected features (`top_k`)
 
-# Optional Flags / Variants
+* Edit at top of `preprocess_and_rank.py` or call `main(top_k=100)` inside `if __name__ == "__main__":` before running.
+* Output: `[DONE] Selected top 100 features` and `models/selected_features.npy` length = 100.
+* Tradeoff: larger `top_k` → slower SVM training, sometimes slightly better accuracy.
 
-These are **optional configurations you can change**.
+### Change split ratio (`test_size`) and seed
 
----
+* Edit `train_split.py` `main(test_size=..., random_state=...)`.
+* Run split again to regenerate `models/X_train.npy` & test files.
+* Use `random_state=42` for reproducibility.
 
-# 1. Change number of selected features
+### Change extraction batch size (speed)
 
-Default:
+* Edit `BATCH_SIZE` in `src/extract_dataset_features.py` (default 128). Increase if you have RAM & CPU to speed up extraction.
+* `NUM_WORKERS = os.cpu_count() or 4` controls threads for loading images.
 
-```
-top_k = 60
-```
+### PCA — when and how to enable (ONLY if necessary)
 
-Run:
+* **Do not enable PCA by default.**
+* Use PCA only if you face memory or speed problems (e.g., cannot train SVM because `selected_features` would be >200 or SVM time/memory is prohibitive).
+* If you must use PCA, integrate it **after StandardScaler** and **before** the model — but **do not** run PCA **before** XGBoost ranking if you want interpretable ranking. There are two valid designs:
 
-```bash
-python src/preprocess_and_rank.py
-```
+  * **If you keep XGBoost ranking**: do **not** PCA — ranking expects original features.
+  * **If you switch to PCA compression**: remove XGBoost ranking and train SVM on PCA components:
 
-Modify code to:
+    ```
+    VarianceThreshold → StandardScaler → PCA → SVM
+    ```
+* How to add PCA quickly:
 
-```python
-main(top_k=100)
-```
+  * `from sklearn.decomposition import PCA`
+  * `pca = PCA(n_components=100, random_state=42) ; Xp = pca.fit_transform(Xs)`
+  * Save `pca.joblib` and load it in `predict_cli.py`.
 
-Expected output:
+### Determinism
 
-```text
-[DONE] Selected top 100 features
-```
-
-Effect:
-
-```
-Higher capacity model
-Slightly slower SVM
-Sometimes +1–2% accuracy
-```
+* `np.random.seed(42)` is included in `preprocess_and_rank.py`. Keep `random_state=42` in any downstream training for reproducible results.
 
 ---
 
-# 2. Change test split size
+# Failure modes & checks (be ruthless)
 
-Default:
+1. **Data leakage**: always confirm `models/X_train.npy` exists before running `preprocess_and_rank.py`. If `preprocess_and_rank.py` uses `Features/X.npy`, that’s leakage. Quick check:
 
-```
-test_size = 0.2
-```
+   ```bash
+   ls models/X_train.npy || echo "Run train_split.py first"
+   ```
 
-Run:
+2. **Mismatched lengths**: before splitting, `train_split.py` validates `len(X)==len(y_veg)==len(y_fresh)`. If it fails, abort and inspect `Features/y_*.npy` — extractor silently skips unreadable images but must keep label arrays in sync.
 
-```python
-main(test_size=0.3)
-```
+3. **EfficientNet color bug**: extractor converts BGR→RGB; if you changed that, re-run feature extraction. If you see sudden accuracy drops, confirm `extract_features.py` returns shape `(1312,)`.
 
-Expected output:
+4. **Model loading error**: `predict_cli.py` should not call `ensure_dirs()` — if models missing, raise error rather than creating empty models. If missing, re-run training.
 
-```
-Train = 25200
-Test = 10800
-```
+5. **Memory spikes during extraction**: lower `BATCH_SIZE` or increase swap. Monitor `htop`.
 
-Effect:
-
-```
-More reliable evaluation
-Less training data
-```
+6. **Unusually high evaluation scores (>98%)**: very likely leakage. Re-run steps and ensure proper order.
 
 ---
 
-# 3. Change feature batch size (feature extraction)
-
-Default:
-
-```
-BATCH_SIZE = 128
-```
-
-If GPU or strong CPU:
-
-```python
-BATCH_SIZE = 256
-```
-
-Expected output:
-
-```
-Batches reduced
-Extraction faster
-```
-
----
-
-# 4. Run prediction on multiple images
-
-Example:
-
-```bash
-python src/predict_cli.py --image sample_images/carrot1.jpg
-python src/predict_cli.py --image sample_images/tomato1.jpg
-python src/predict_cli.py --image sample_images/potato1.jpg
-```
-
-Example outputs:
-
-```
-Vegetable: carrot (91.02%)
-Score: 82.4
-Grade: Mostly Fresh
-```
-
-```
-Vegetable: potato (88.11%)
-Score: 45.1
-Grade: Rotten
-```
-
----
-
-# Final Files Created in Project
+# Final artifacts (what you should see at the end)
 
 ```
 Features/
- ├ X.npy
+ ├ X.npy             # (N,1312)
  ├ y_veg.npy
  └ y_fresh.npy
 
@@ -386,4 +309,15 @@ models/
 ```
 
 ---
+
+# Final suggested short checklist before step 3 (preprocess_and_rank)
+
+1. `python -c "import numpy as np; print(np.load('Features/X.npy').shape)"`
+2. `python -c "import numpy as np; print(np.load('Features/y_veg.npy').shape, np.load('Features/y_fresh.npy').shape)"`
+3. Run `python src/train_split.py`
+4. Confirm `ls models/X_train.npy models/X_test.npy`
+5. Only then run `python src/preprocess_and_rank.py`
+
+---
+
 

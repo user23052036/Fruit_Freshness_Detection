@@ -1,33 +1,31 @@
-"""
-Utility functions for model persistence and general helpers.
-"""
-import joblib
 import os
+import joblib
 
+TARGET_VEGETABLES = {
+    "tomato",
+    "carrot",
+    "potato",
+    "cucumber",
+    "capsicum"
+}
 
-def save_model(model, path):
-    """
-    Save a trained model to disk using joblib.
-    
-    Args:
-        model: The model object to save (sklearn model, encoder, etc.)
-        path: File path where the model will be saved
-    """
+def ensure_dirs(*paths):
+    for p in paths:
+        os.makedirs(p, exist_ok=True)
+
+def save_model(obj, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    joblib.dump(model, path)
-    print(f"✓ Model saved to {path}")
-
+    joblib.dump(obj, path)
 
 def load_model(path):
-    """
-    Load a trained model from disk.
-    
-    Args:
-        path: File path to the saved model
-        
-    Returns:
-        The loaded model object
-    """
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Model file not found: {path}")
     return joblib.load(path)
+
+def grade_from_score(score: float) -> str:
+    """Score in [0,100]."""
+    if score >= 95:
+        return "Fully Fresh"
+    if score >= 75:
+        return "Mostly Fresh"
+    if score >= 50:
+        return "Medium"
+    return "Rotten"

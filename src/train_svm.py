@@ -1,179 +1,109 @@
-# src/train_svm.py
 import os
-import glob
 import numpy as np
-from typing import Tuple
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import LabelEncoder
 from sklearn.svm import SVC
-from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import hinge_loss
+from utils import save_model, load_model, ensure_dirs
 
-from extract_features import extract_features
-from utils import save_model
-
-DATA_DIR = "dataset/train"
 MODEL_DIR = "models"
+FEATURE_DIR = "Features"
+
+ensure_dirs(MODEL_DIR)
 
 
-def parse_folder(folder):
-    folder = folder.lower()
-    if folder in ["apple", "banana", "orange"]:
-        return folder, "fresh"
-    if folder.startswith("rotten"):
-        fruit = folder.replace("rotten", "")
-        if fruit.endswith("s"):
-            fruit = fruit[:-1]
-        return fruit, "rotten"
-    return None, None
+def load_features_for_training():
+
+    # Prefer train split if available
+    x_train_path = os.path.join(MODEL_DIR, "X_train.npy")
+
+    if os.path.exists(x_train_path):
+
+        X = np.load(x_train_path)
+        y_veg = np.load(os.path.join(MODEL_DIR, "y_veg_train.npy"))
+        y_fresh = np.load(os.path.join(MODEL_DIR, "y_fresh_train.npy"))
+
+    else:
+
+        X = np.load(os.path.join(FEATURE_DIR, "X.npy"))
+        y_veg = np.load(os.path.join(FEATURE_DIR, "y_veg.npy"))
+        y_fresh = np.load(os.path.join(FEATURE_DIR, "y_fresh.npy"))
+
+    return X, y_veg, y_fresh
 
 
-def get_images(path):
-    imgs = []
-    for ext in ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.PNG", "*.JPEG"):
-        imgs.extend(glob.glob(os.path.join(path, ext)))
-    return imgs
+def main():
 
+    print("[INFO] Loading features...")
 
-def load_dataset() -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Returns:
-        X        : (n_samples, n_features) float32
-        y_fruit  : fruit labels (str)
-        y_fresh  : freshness labels (1 = fresh, 0 = rotten)
-    """
-    X, y_fruit, y_fresh = [], [], []
+    X, y_veg, y_fresh = load_features_for_training()
 
-    for folder in os.listdir(DATA_DIR):
-        folder_path = os.path.join(DATA_DIR, folder)
-        if not os.path.isdir(folder_path):
-            continue
+    # Load preprocessing artifacts
+    vt = load_model(os.path.join(MODEL_DIR, "variance.joblib"))
+    scaler = load_model(os.path.join(MODEL_DIR, "scaler.joblib"))
+    selected = np.load(os.path.join(MODEL_DIR, "selected_features.npy"))
 
-        fruit, freshness = parse_folder(folder)
-        if fruit is None:
-            continue
+    print("[INFO] Applying preprocessing pipeline...")
 
-        for img in get_images(folder_path):
-            try:
-                feats, _ = extract_features(img)
-                X.append(feats)
-                y_fruit.append(fruit)
-                y_fresh.append(1 if freshness == "fresh" else 0)
-            except Exception as e:
-                print(f"[WARN] Skipping {img}: {e}")
+    # Remove constant features
+    X_reduced = vt.transform(X)
 
-    if not X:
-        raise RuntimeError("No valid training samples found.")
+    # Standardize
+    X_scaled = scaler.transform(X_reduced)
 
-    # sanity check
-    lengths = {f.shape[0] for f in X}
-    if len(lengths) != 1:
-        raise RuntimeError(f"Feature length mismatch: {lengths}")
+    # Select top features
+    X_final = X_scaled[:, selected]
 
-    X = np.vstack(X).astype(np.float32)
-    return X, np.array(y_fruit), np.array(y_fresh)
+    print("[INFO] Feature matrix after selection:", X_final.shape)
+
+    # Encode vegetable labels
+    le = LabelEncoder()
+    yveg_encoded = le.fit_transform(y_veg)
+
+    save_model(le, os.path.join(MODEL_DIR, "label_encoder.joblib"))
+
+    # ---------------------------
+    # Vegetable classifier
+    # ---------------------------
+
+    print("[INFO] Training vegetable classifier...")
+
+    veg_model = SVC(
+                    kernel="rbf",
+                    C=1.0,
+                    gamma="scale",
+                    probability=True,
+                    class_weight="balanced")
+
+    veg_model.fit(X_final, yveg_encoded)
+
+    save_model(
+        veg_model,
+        os.path.join(MODEL_DIR, "veg_svm.joblib")
+    )
+
+    print("[DONE] Vegetable classifier saved")
+
+    # ---------------------------
+    # Freshness classifier
+    # ---------------------------
+
+    print("[INFO] Training freshness classifier...")
+
+    fresh_model = SVC(
+                    kernel="rbf",
+                    C=1.0,
+                    gamma="scale",
+                    probability=True,
+                    class_weight="balanced")
+
+    fresh_model.fit(X_final, y_fresh)
+
+    save_model(
+        fresh_model,
+        os.path.join(MODEL_DIR, "fresh_svm.joblib")
+    )
+
+    print("[DONE] Freshness classifier saved")
 
 
 if __name__ == "__main__":
-    print("[INFO] Loading training data...")
-    X, y_fruit, y_fresh = load_dataset()
-    print("[INFO] Samples loaded:", len(X))
-
-    os.makedirs(MODEL_DIR, exist_ok=True)
-
-    # =======================
-    # Encode fruit labels
-    # =======================
-    le = LabelEncoder()
-    y_fruit_enc = le.fit_transform(y_fruit)
-    save_model(le, f"{MODEL_DIR}/label_encoder.joblib")
-
-    # =======================
-    # Hyperparameter grid
-    # =======================
-    params = {
-        "svc__C": [1, 10],
-        "svc__gamma": ["scale", "auto"]
-    }
-
-    # =======================
-    # Fruit classifier (SVM)
-    # =======================
-    print("[INFO] Training fruit classifier...")
-    fruit_model = Pipeline([
-        ("scaler", StandardScaler()),
-        ("svc", SVC(kernel="rbf", probability=True))
-    ])
-
-    fruit_clf = GridSearchCV(
-        fruit_model,
-        params,
-        cv=5,
-        n_jobs=-1
-    )
-    fruit_clf.fit(X, y_fruit_enc)
-    save_model(
-        fruit_clf.best_estimator_,
-        f"{MODEL_DIR}/fruit_type_svm.joblib"
-    )
-
-    # ============================================================
-    # SVM SOLVER CONVERGENCE (max_iter vs hinge loss) – FRESHNESS
-    # ============================================================
-    print("[INFO] Tracking SVM solver convergence (max_iter vs hinge loss)...")
-
-    MAX_ITERS = [50, 100, 300, 600, 1000]
-    hinge_losses = []
-
-    # hinge loss expects labels in {-1, +1}
-    y_signed = np.where(y_fresh == 1, 1, -1)
-
-    for it in MAX_ITERS:
-        temp_model = Pipeline([
-            ("scaler", StandardScaler()),
-            ("svc", SVC(
-                kernel="rbf",
-                C=10,
-                gamma="scale",
-                max_iter=it
-            ))
-        ])
-
-        temp_model.fit(X, y_fresh)
-
-        X_scaled = temp_model.named_steps["scaler"].transform(X)
-        scores = temp_model.named_steps["svc"].decision_function(X_scaled)
-
-        loss = np.mean(np.maximum(0, 1 - y_signed * scores))
-        hinge_losses.append(loss)
-
-        print(f"[ITER {it}] Hinge Loss: {loss:.4f}")
-
-    np.savez(
-        f"{MODEL_DIR}/svm_convergence.npz",
-        max_iter=np.array(MAX_ITERS),
-        hinge_loss=np.array(hinge_losses)
-    )
-
-    # =======================
-    # Final freshness model
-    # =======================
-    print("[INFO] Training freshness classifier...")
-    fresh_model = Pipeline([
-        ("scaler", StandardScaler()),
-        ("svc", SVC(kernel="rbf", probability=True))
-    ])
-
-    fresh_clf = GridSearchCV(
-        fresh_model,
-        params,
-        cv=5,
-        n_jobs=-1
-    )
-    fresh_clf.fit(X, y_fresh)
-    save_model(
-        fresh_clf.best_estimator_,
-        f"{MODEL_DIR}/freshness_svm.joblib"
-    )
-
-    print("[SUCCESS] Training complete.")
+    main()

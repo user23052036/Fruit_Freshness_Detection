@@ -6,4 +6,5 @@ pillow
 tqdm
 joblib
 matplotlib
+seaborn
 tensorflow

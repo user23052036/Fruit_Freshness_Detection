@@ -35,7 +35,7 @@ models/*.pkl
 # =========================
 *.log
 *.tmp
-
+*.mp3
 # =========================
 # Jupyter (if ever used)
 # =========================
@@ -47,9 +47,14 @@ models/*.pkl
 dataset/
 duplicates/
 vegetable_Dataset/
-Notebok/mam_instruction.mp3
 
 # =========================
 # Git metadata safety
 # =========================
 .gitignore~
+
+
+Features/
+models/*.npy
+models/*.png
+models/*.npz
