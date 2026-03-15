@@ -47,6 +47,7 @@ models/*.pkl
 dataset/
 duplicates/
 vegetable_Dataset/
+kaggle_dataset/
 
 # =========================
 # Git metadata safety
