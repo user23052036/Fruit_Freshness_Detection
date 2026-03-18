@@ -2,8 +2,8 @@ import os
 import joblib
 
 TARGET_VEGETABLES = {
-    "tomato",
-    "carrot",
+    "apple",
+    "banana",
     "potato",
     "cucumber",
     "capsicum"
@@ -21,11 +21,14 @@ def load_model(path):
     return joblib.load(path)
 
 def grade_from_score(score: float) -> str:
-    """Score in [0,100]."""
-    if score >= 95:
-        return "Fully Fresh"
-    if score >= 75:
-        return "Mostly Fresh"
-    if score >= 50:
-        return "Medium"
+    """
+    Score in [0, 100] derived from SVM decision function distance.
+    Higher score = further into the fresh region of feature space.
+    """
+    if score >= 85:
+        return "Truly Fresh"
+    if score >= 65:
+        return "Fresh"
+    if score >= 40:
+        return "Moderate"
     return "Rotten"

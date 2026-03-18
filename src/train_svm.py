@@ -104,6 +104,22 @@ def main():
 
     print("[DONE] Freshness classifier saved")
 
+    # ---------------------------
+    # Compute and save decision
+    # function normalization bounds
+
+    print("[INFO] Computing decision function bounds for freshness grading...")
+
+    # decision_function returns signed distance from hyperplane
+    # positive = fresh side, negative = rotten side
+    train_decisions = fresh_model.decision_function(X_final)
+
+    bounds = np.array([train_decisions.min(), train_decisions.max()])
+
+    np.save(os.path.join(MODEL_DIR, "fresh_decision_bounds.npy"), bounds)
+
+    print(f"[DONE] Decision bounds saved — min: {bounds[0]:.4f}, max: {bounds[1]:.4f}")
+
 
 if __name__ == "__main__":
     main()

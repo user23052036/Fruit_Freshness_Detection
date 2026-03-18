@@ -19,22 +19,18 @@ def load_training_features():
     xtrain_path = os.path.join(MODEL_DIR, "X_train.npy")
 
     if not os.path.exists(xtrain_path):
-        raise RuntimeError("Run train_split.py before preprocess_and_rank.py")
+        raise RuntimeError(
+            "X_train.npy not found. Run train_split.py before preprocess_and_rank.py"
+        )
 
-        X = np.load(xtrain_path)
-        y_veg = np.load(os.path.join(MODEL_DIR, "y_veg_train.npy"))
-        y_fresh = np.load(os.path.join(MODEL_DIR, "y_fresh_train.npy"))
+    # Load only training split — never full dataset (would cause data leakage)
+    X = np.load(xtrain_path)
+    y_veg = np.load(os.path.join(MODEL_DIR, "y_veg_train.npy"))
+    y_fresh = np.load(os.path.join(MODEL_DIR, "y_fresh_train.npy"))
 
-    else:
-
-        X = np.load(os.path.join(FEATURE_DIR, "X.npy"))
-        y_veg = np.load(os.path.join(FEATURE_DIR, "y_veg.npy"))
-        y_fresh = np.load(os.path.join(FEATURE_DIR, "y_fresh.npy"))
-
-    # Combine labels for feature ranking
+    # Combine veg + freshness into single label for XGBoost feature ranking
     combined_labels = np.array([f"{v}_{f}" for v, f in zip(y_veg, y_fresh)])
 
-    # Encode to integers
     le = LabelEncoder()
     y = le.fit_transform(combined_labels)
 
