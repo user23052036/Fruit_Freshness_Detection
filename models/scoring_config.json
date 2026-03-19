@@ -1,43 +1,52 @@
 {
   "global_bounds": {
-    "p5": -2.3423913754376953,
-    "p95": 2.1995730498738295,
-    "hard_min": -3.398836877909333,
-    "hard_max": 3.442568455332955
+    "p5": -2.4204007644459473,
+    "p95": 2.1465376800701974,
+    "hard_min": -3.3545544743399702,
+    "hard_max": 2.955842585371126
   },
   "per_veg_bounds": {
     "apple": {
-      "p5": -2.4238005177718134,
-      "p95": 1.9040229615719717,
-      "hard_min": -3.238593962830427,
-      "hard_max": 2.801554504492734
+      "p5": -2.477962643969304,
+      "p95": 2.1049741815176883,
+      "hard_min": -3.3545544743399702,
+      "hard_max": 2.955842585371126
     },
     "banana": {
-      "p5": -2.421867499917946,
-      "p95": 2.5221471423469604,
-      "hard_min": -3.398836877909333,
-      "hard_max": 3.442568455332955
+      "p5": -2.5171877595684653,
+      "p95": 2.186929961988265,
+      "hard_min": -3.2681532614409523,
+      "hard_max": 2.8960503610512034
     },
     "capsicum": {
-      "p5": -1.2100352122243627,
-      "p95": 2.193988456775253,
-      "hard_min": -2.190934067663882,
-      "hard_max": 2.6701247109619826
+      "p5": -1.5667557978847562,
+      "p95": 2.3746511767033636,
+      "hard_min": -2.7535334353830865,
+      "hard_max": 2.7693120218926195
     },
     "cucumber": {
-      "p5": -1.98946969062138,
-      "p95": 1.6909114403363807,
-      "hard_min": -2.5216484535042953,
-      "hard_max": 2.386591370727759
+      "p5": -2.0370414975093856,
+      "p95": 1.814254739506068,
+      "hard_min": -3.0839965737157558,
+      "hard_max": 2.1075391230237703
     },
     "potato": {
-      "p5": -2.0932420300629273,
-      "p95": 1.7217004418487591,
-      "hard_min": -3.0087630780129584,
-      "hard_max": 2.643677549912543
+      "p5": -1.8604687540667229,
+      "p95": 1.7081808240359473,
+      "hard_min": -2.8095492912705913,
+      "hard_max": 2.5077641154728205
     }
   },
-  "boundary_threshold": 0.05,
-  "unstable_std_thresh": 9.0,
-  "veg_confidence_threshold": 0.7
+  "boundary_threshold": 0.1,
+  "unstable_range_thresh": 26.176600679150198,
+  "veg_confidence_threshold": 0.7,
+  "veg_gap_threshold": 0.15,
+  "mahal_thresh_caution": 13.137813568115234,
+  "mahal_thresh_ood": 16.759714126586914,
+  "ood_rate_val": 0.015031645569620253,
+  "min_laplacian_variance": 28.0,
+  "min_brightness": 30.0,
+  "max_brightness": 220.0,
+  "min_coverage": 0.4,
+  "calibration_note": "All thresholds calibrated on validation split. unstable_range_thresh derived from real augmentation percentile. Test set not touched during training or calibration."
 }
