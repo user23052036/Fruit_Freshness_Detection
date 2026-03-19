@@ -4,7 +4,7 @@ import numpy as np
 from sklearn.metrics import (
     accuracy_score, classification_report, confusion_matrix
 )
-from utils import load_model, grade_from_score
+from utils import load_model
 
 MODEL_DIR = "models"
 
@@ -52,11 +52,15 @@ def get_deployed_scores(decisions, y_veg, veg_probs, scoring_config):
     return np.array(scores, dtype=float)
 
 
-def score_to_tier(s):
+def score_to_tier(s, grade_thr=None):
     """Map continuous score to 4-level integer tier (for bucket inversion)."""
-    if s >= 85: return 3
-    if s >= 65: return 2
-    if s >= 40: return 1
+    thr = grade_thr or {}
+    t1  = thr.get("truly_fresh", 85)
+    t2  = thr.get("fresh",       65)
+    t3  = thr.get("moderate",    40)
+    if s >= t1: return 3
+    if s >= t2: return 2
+    if s >= t3: return 1
     return 0
 
 
@@ -78,7 +82,7 @@ def inversion_rate(scores_fresh, scores_rotten, n=10000, seed=42):
     return float((scores_fresh[fi] < scores_rotten[ri]).mean())
 
 
-def three_layer_inversions(decisions, scores, y_fresh):
+def three_layer_inversions(decisions, scores, y_fresh, grade_thr=None):
     """
     Report inversion at:
       1. raw margin         (model signal)
@@ -93,7 +97,7 @@ def three_layer_inversions(decisions, scores, y_fresh):
     inv_raw  = inversion_rate(decisions[fresh], decisions[rotten])
     inv_norm = inversion_rate(scores[fresh],    scores[rotten])
 
-    tiers      = np.array([score_to_tier(s) for s in scores], dtype=float)
+    tiers      = np.array([score_to_tier(s, grade_thr) for s in scores], dtype=float)
     inv_grade  = inversion_rate(tiers[fresh], tiers[rotten])
 
     return inv_raw, inv_norm, inv_grade
@@ -237,9 +241,11 @@ def main():
     # ─────────────────────────────────────────
     print("\n========== Inversion Rate Diagnostics ==========")
 
+    grade_thr = scoring_config.get("grade_thresholds", {})
+
     print("\n  [A] Global-bounds scores (baseline):")
     inv_raw, inv_norm_g, inv_grade_g = three_layer_inversions(
-        decisions, scores_global, y_fresh_test
+        decisions, scores_global, y_fresh_test, grade_thr
     )
     print(f"    Raw margin inversion       : {inv_raw:.4f}  ← primary")
     print(f"    Global-norm inversion      : {inv_norm_g:.4f}  ← primary")
@@ -247,7 +253,7 @@ def main():
 
     print("\n  [B] Deployed-path scores (mirrors CLI gate):")
     _, inv_norm_d, inv_grade_d = three_layer_inversions(
-        decisions, scores_deployed, y_fresh_test
+        decisions, scores_deployed, y_fresh_test, grade_thr
     )
     print(f"    Raw margin inversion       : {inv_raw:.4f}  (same model)")
     print(f"    Deployed-norm inversion    : {inv_norm_d:.4f}  ← primary")
@@ -448,7 +454,24 @@ def main():
     veg_conf_ok = (top1_arr >= conf_thresh) & (gap_arr >= gap_thresh_val)
 
     near_boundary_arr = np.abs(decisions) < boundary_thresh
-    decision_unreliable_arr = near_boundary_arr | (~veg_conf_ok)
+
+    # Centroid gate — mirrors predict_cli.py class-consistency check
+    class_centroids_arr = np.load(os.path.join(MODEL_DIR, "class_centroids.npy"))
+    per_cls_thresh      = scoring_config.get("centroid_ratio_thresholds", {})
+    centroid_gate_arr   = np.zeros(len(X), dtype=bool)
+    for i in range(len(X)):
+        x_f      = X[i]
+        dists_c  = np.linalg.norm(class_centroids_arr - x_f, axis=1)
+        pidx     = int(yveg_pred[i])
+        sorted_c = np.argsort(dists_c)
+        d_pred   = dists_c[pidx]
+        d_sec    = next(dists_c[j] for j in sorted_c if j != pidx)
+        ratio    = float(d_pred / (d_sec + 1e-9))
+        veg_n    = le.inverse_transform([pidx])[0]
+        thresh_c = float(per_cls_thresh.get(veg_n, 1.0))
+        centroid_gate_arr[i] = ratio > thresh_c
+
+    decision_unreliable_arr = near_boundary_arr | (~veg_conf_ok) | centroid_gate_arr
 
     # Note: augmentation-instability UNRELIABLE not simulatable here
     state_arr = np.where(
@@ -635,22 +658,7 @@ def main():
     veg_wrong_all = ~correct_veg   # all misclassified veg samples
     n_veg_wrong   = veg_wrong_all.sum()
     caught_ood     = (veg_wrong_all &  is_ood_arr).sum()
-    caught_centroid_col = np.load(os.path.join(MODEL_DIR, "class_centroids.npy"),
-                                  allow_pickle=True)
-    # Recompute centroid ratio for test set to get centroid gate fires
-    per_cls_thresh = scoring_config.get("centroid_ratio_thresholds", {})
-    centroid_gate_arr = np.zeros(n_total, dtype=bool)
-    for i in range(n_total):
-        x_f    = X[i]
-        dists  = np.linalg.norm(caught_centroid_col - x_f, axis=1)
-        pidx   = int(yveg_pred[i])
-        sorted_d = np.argsort(dists)
-        d_pred   = dists[pidx]
-        d_sec    = next(dists[j] for j in sorted_d if j != pidx)
-        ratio    = float(d_pred / (d_sec + 1e-9))
-        veg_n    = le.inverse_transform([pidx])[0]
-        thresh_c = float(per_cls_thresh.get(veg_n, 1.0))
-        centroid_gate_arr[i] = ratio > thresh_c
+    # centroid_gate_arr already computed in section 8
 
     caught_by_centroid_only = (veg_wrong_all & centroid_gate_arr & ~is_ood_arr).sum()
     caught_by_ood_only      = (veg_wrong_all & is_ood_arr & ~centroid_gate_arr).sum()
@@ -674,7 +682,9 @@ def main():
     aug_paths_file = os.path.join(MODEL_DIR, "val_image_paths.npy")
     aug_veg_file   = os.path.join(MODEL_DIR, "y_veg_val.npy")
 
-    if not os.path.exists(aug_paths_file) or not os.path.exists(aug_veg_file):
+    if not scoring_config.get("use_augmentation_gate", False):
+        print("  [DISABLED] use_augmentation_gate=False in scoring_config.")
+    elif not os.path.exists(aug_paths_file) or not os.path.exists(aug_veg_file):
         print("  [SKIP] val_image_paths.npy not found. Re-run extraction + split.")
     else:
         import cv2

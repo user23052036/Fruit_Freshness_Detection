@@ -267,43 +267,33 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     is_ood = (zone == "ood")
 
     # ── Augmentation instability ────────────────────────────
+    use_aug_gate = cfg.get("use_augmentation_gate", False)
     score_range, score_std, aug_scores, aug_raws = 0.0, 0.0, [], []
-    if compute_uncertainty:
+    if use_aug_gate and compute_uncertainty:
         score_range, score_std, aug_scores, aug_raws = augment_and_score(
             image_path, vt, scaler, selected,
             fresh_svm, veg_name if veg_confident else "__global__", cfg
         )
 
-    # Fix 1 — threshold raised from 7.0/9.0 to 13.0 default.
-    # 9.0 was calibrated on clean dataset variance, which is too strict
-    # for real-world images where brightness-sensitive vegetables
-    # (banana, capsicum, apple) show natural ranges of 11–15 pts.
     unstable_range_thresh = cfg.get("unstable_range_thresh", 13.0)
-    high_range = score_range >= unstable_range_thresh
-
-    # Raw-margin sign flip: the SVM decision boundary is raw == 0.
-    # A true class flip occurs only when augmented raws cross zero.
-    # Using normalized score threshold (e.g. 50) is wrong because
-    # p5/p95 skew means 50 does not map to raw == 0.
-    crosses_boundary = (
-        len(aug_raws) > 0
-        and min(aug_raws) < 0
-        and max(aug_raws) > 0
-    )
-
-    # Three-state instability logic:
-    #   high_range + crosses raw==0  → prediction actually flips → UNRELIABLE
-    #   high_range but same raw side → sensitive but consistent  → see below
-    #   low range                    → stable                    → RELIABLE
-    unstable       = high_range and crosses_boundary
-    # Fix 2 — sensitivity only triggers TENTATIVE when range exceeds 1.5×
-    # threshold. Below that cutoff the image is sensitive but consistent
-    # and should not be downgraded.
-    sensitive_only = (
-        high_range
-        and not crosses_boundary
-        and score_range > unstable_range_thresh * 1.5
-    )
+    if use_aug_gate:
+        high_range = score_range >= unstable_range_thresh
+        crosses_boundary = (
+            len(aug_raws) > 0
+            and min(aug_raws) < 0
+            and max(aug_raws) > 0
+        )
+        unstable = high_range and crosses_boundary
+        sensitive_only = (
+            high_range
+            and not crosses_boundary
+            and score_range > unstable_range_thresh * 1.5
+        )
+    else:
+        high_range       = False
+        crosses_boundary = False
+        unstable         = False
+        sensitive_only   = False
 
     # ── Boundary proximity ──────────────────────────────────
     boundary_thresh = cfg["boundary_threshold"]
@@ -429,7 +419,7 @@ def predict(image_path: str, compute_uncertainty: bool = True):
 
     else:
         # Fully reliable
-        grade = grade_from_score(score)   # grade_from_score stays pure
+        grade = grade_from_score(score, cfg)   # thresholds sourced from scoring_config
         result = {
             "state"      : "RELIABLE",
             "veg"        : veg_name,

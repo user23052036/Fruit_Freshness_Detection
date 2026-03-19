@@ -110,7 +110,10 @@ def calibrate_boundary_threshold(val_decisions, y_fresh_val):
 
 
 def calibrate_unstable_range_thresh(vt, scaler, selected, fresh_model,
-                                     global_bounds, n_per_veg=60, seed=42):
+                                     global_bounds, per_veg_bounds=None,
+                                     veg_model=None, le=None,
+                                     veg_conf_thresh=0.70, veg_gap_thresh=0.15,
+                                     n_per_veg=60, seed=42):
     """
     Calibrate instability threshold using the EXACT SAME augmentations
     as predict_cli.py at runtime.
@@ -161,12 +164,6 @@ def calibrate_unstable_range_thresh(vt, scaler, selected, fresh_model,
         sample_paths.extend(veg_paths[chosen].tolist())
         print(f"  [INFO] Calibration sampling: {veg:<12} {n} images")
 
-    p5, p95 = global_bounds["p5"], global_bounds["p95"]
-    denom   = max(p95 - p5, 1e-6)
-
-    def norm(raw):
-        return float(np.clip((raw - p5) / denom * 100.0, 0.0, 100.0))
-
     def preprocess_feats(img_rgb):
         batch  = preprocess_input(np.expand_dims(img_rgb.astype(np.float32), 0))
         deep_f = deep_model.predict(batch, verbose=0)[0].astype(np.float32)
@@ -188,6 +185,32 @@ def calibrate_unstable_range_thresh(vt, scaler, selected, fresh_model,
         rgb    = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         rgb    = cv2.resize(rgb, (224, 224))
         h, w   = rgb.shape[:2]
+
+        # Per-sample normalization bounds — exact mirror of predict_cli.py gating
+        try:
+            if veg_model is None or le is None or not per_veg_bounds:
+                raise ValueError("veg_model/le/per_veg_bounds not provided")
+            Xf_orig           = preprocess_feats(rgb)
+            veg_p             = veg_model.predict_proba(Xf_orig)[0]
+            sorted_p          = np.sort(veg_p)[::-1]
+            veg_idx_cal       = int(np.argmax(veg_p))
+            pred_veg          = le.inverse_transform([veg_idx_cal])[0]
+            veg_conf_cal      = float(sorted_p[0]) * 100.0
+            conf_gap_cal      = float(sorted_p[0] - sorted_p[1]) * 100.0
+            cal_conf_thr      = veg_conf_thresh * 100.0
+            cal_gap_thr       = veg_gap_thresh  * 100.0
+            veg_confident_cal = (veg_conf_cal >= cal_conf_thr) and (conf_gap_cal >= cal_gap_thr)
+            sample_bounds     = (per_veg_bounds.get(pred_veg, global_bounds)
+                                 if veg_confident_cal else global_bounds)
+        except Exception:
+            sample_bounds = global_bounds
+
+        p5_s    = sample_bounds["p5"]
+        p95_s   = sample_bounds["p95"]
+        denom_s = max(p95_s - p5_s, 1e-6)
+
+        def norm(raw, _p5=p5_s, _d=denom_s):
+            return float(np.clip((raw - _p5) / _d * 100.0, 0.0, 100.0))
 
         # Exact same augmentations as predict_cli.py augment_and_score()
         augmented = [
@@ -286,28 +309,6 @@ def calibrate_mahalanobis_thresholds(X_final_train,
     return thresh_caution, thresh_ood, ood_rate_val
 
 
-def calibrate_veg_confidence_gate(val_decisions, veg_probs_val,
-                                   y_fresh_val, y_veg_val):
-    """
-    Simple sweep to find (conf_thresh, gap_thresh) pair that minimises
-    per-veg normalization mismatch on the validation set.
-    Conservative defaults are used; the sweep confirms or adjusts them.
-    """
-    # Default: absolute >= 0.70 AND gap >= 0.15
-    # Report score sensitivity to gate flip on val set
-    top1 = veg_probs_val.max(axis=1)
-    top2 = np.sort(veg_probs_val, axis=1)[:, -2]
-    gap  = top1 - top2
-
-    n_total    = len(top1)
-    n_pass     = ((top1 >= 0.70) & (gap >= 0.15)).sum()
-    n_fallback = n_total - n_pass
-
-    print(f"[INFO] Veg gate on val: {n_pass}/{n_total} use per-veg bounds, "
-          f"{n_fallback} fall back to global.")
-
-    return 0.70, 0.15   # tunable; defaults confirmed by inspection
-
 
 # ─────────────────────────────────────────────────────────────
 # Main
@@ -388,7 +389,10 @@ def main():
 
     # Fix 1+2: real image-space augmentation calibration matching predict_cli.py
     unstable_range_thresh = calibrate_unstable_range_thresh(
-        vt, scaler, selected, fresh_model, global_bounds
+        vt, scaler, selected, fresh_model, global_bounds,
+        per_veg_bounds=per_veg_bounds,
+        veg_model=veg_model,
+        le=le,
     )
 
     # ── Mahalanobis (Ledoit-Wolf shrinkage) ──────────────────
@@ -404,11 +408,9 @@ def main():
         X_train, X_val, train_mean, precision
     )
 
-    # ── Veg confidence gate calibration ─────────────────────
-    veg_probs_val = veg_model.predict_proba(X_val)
-    veg_conf_thresh, veg_gap_thresh = calibrate_veg_confidence_gate(
-        val_decisions, veg_probs_val, y_fresh_val, y_veg_val
-    )
+    # design constants (not data-calibrated)
+    veg_conf_thresh = 0.70
+    veg_gap_thresh  = 0.15
 
     # ── Per-class centroids (class-consistency sanity check) ─
     # Computes the mean feature vector per vegetable class from training data.
@@ -463,12 +465,15 @@ def main():
     # Fix 3: preflight thresholds now live in config — tunable without
     # code changes, consistent across training and deployment.
     scoring_config = {
+        "grade_thresholds"        : {"truly_fresh": 85, "fresh": 65, "moderate": 40},
+        "use_augmentation_gate"   : False,
         "global_bounds"           : global_bounds,
         "per_veg_bounds"          : per_veg_bounds,
         "boundary_threshold"      : boundary_thresh,
         "unstable_range_thresh"   : unstable_range_thresh,
-        "veg_confidence_threshold": veg_conf_thresh,
-        "veg_gap_threshold"       : veg_gap_thresh,
+        "veg_confidence_threshold": veg_conf_thresh,   # 0.70 design constant
+        "veg_gap_threshold"       : veg_gap_thresh,    # 0.15 design constant
+        "veg_gate_source"         : "design_constant",
         "mahal_thresh_caution"    : thresh_caution,
         "mahal_thresh_ood"        : thresh_ood,
         "ood_rate_val"              : ood_rate_val,
@@ -479,8 +484,9 @@ def main():
         "max_brightness"          : 220.0,
         "min_coverage"            : 0.40,
         "calibration_note"        : (
-            "All thresholds calibrated on validation split. "
-            "unstable_range_thresh derived from real augmentation percentile. "
+            "Data-calibrated on validation split: boundary_threshold, unstable_range_thresh, "
+            "mahal thresholds, centroid_ratio_thresholds. "
+            "Design constants (not calibrated): veg_confidence_threshold=0.70, veg_gap_threshold=0.15. "
             "Test set not touched during training or calibration."
         ),
     }

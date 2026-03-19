@@ -20,15 +20,19 @@ def save_model(obj, path):
 def load_model(path):
     return joblib.load(path)
 
-def grade_from_score(score: float) -> str:
+def grade_from_score(score: float, config=None) -> str:
     """
     Score in [0, 100] derived from SVM decision function distance.
     Higher score = further into the fresh region of feature space.
     """
-    if score >= 85:
+    thr = (config or {}).get("grade_thresholds", {})
+    t1  = thr.get("truly_fresh", 85)
+    t2  = thr.get("fresh",       65)
+    t3  = thr.get("moderate",    40)
+    if score >= t1:
         return "Truly Fresh"
-    if score >= 65:
+    if score >= t2:
         return "Fresh"
-    if score >= 40:
+    if score >= t3:
         return "Moderate"
     return "Rotten"

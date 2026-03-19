@@ -1,52 +1,66 @@
 {
+  "grade_thresholds": {
+    "truly_fresh": 85,
+    "fresh": 65,
+    "moderate": 40
+  },
+  "use_augmentation_gate": false,
   "global_bounds": {
-    "p5": -2.4204007644459473,
-    "p95": 2.1465376800701974,
-    "hard_min": -3.3545544743399702,
-    "hard_max": 2.955842585371126
+    "p5": -2.4130322378683515,
+    "p95": 2.1183354357454784,
+    "hard_min": -3.321017046668672,
+    "hard_max": 3.1972835783607243
   },
   "per_veg_bounds": {
     "apple": {
-      "p5": -2.477962643969304,
-      "p95": 2.1049741815176883,
-      "hard_min": -3.3545544743399702,
-      "hard_max": 2.955842585371126
+      "p5": -2.501901375396444,
+      "p95": 2.1348154987984147,
+      "hard_min": -3.321017046668672,
+      "hard_max": 3.1972835783607243
     },
     "banana": {
-      "p5": -2.5171877595684653,
-      "p95": 2.186929961988265,
-      "hard_min": -3.2681532614409523,
-      "hard_max": 2.8960503610512034
+      "p5": -2.4724015524473235,
+      "p95": 2.1636198230868127,
+      "hard_min": -3.26911197894467,
+      "hard_max": 2.9228690505514496
     },
     "capsicum": {
-      "p5": -1.5667557978847562,
-      "p95": 2.3746511767033636,
-      "hard_min": -2.7535334353830865,
-      "hard_max": 2.7693120218926195
+      "p5": -1.451808794754237,
+      "p95": 2.1655879171644976,
+      "hard_min": -2.7297182881034683,
+      "hard_max": 2.450990308612228
     },
     "cucumber": {
-      "p5": -2.0370414975093856,
-      "p95": 1.814254739506068,
-      "hard_min": -3.0839965737157558,
-      "hard_max": 2.1075391230237703
+      "p5": -1.927403381680754,
+      "p95": 1.684360726900969,
+      "hard_min": -2.6363797853666178,
+      "hard_max": 2.3574293824550274
     },
     "potato": {
-      "p5": -1.8604687540667229,
-      "p95": 1.7081808240359473,
-      "hard_min": -2.8095492912705913,
-      "hard_max": 2.5077641154728205
+      "p5": -1.81539664571247,
+      "p95": 1.7007925272308497,
+      "hard_min": -2.6207065928296736,
+      "hard_max": 2.293662804267413
     }
   },
-  "boundary_threshold": 0.1,
-  "unstable_range_thresh": 26.176600679150198,
+  "boundary_threshold": 0.05,
+  "unstable_range_thresh": 32.473686025888085,
   "veg_confidence_threshold": 0.7,
   "veg_gap_threshold": 0.15,
-  "mahal_thresh_caution": 13.137813568115234,
-  "mahal_thresh_ood": 16.759714126586914,
-  "ood_rate_val": 0.015031645569620253,
+  "veg_gate_source": "design_constant",
+  "mahal_thresh_caution": 13.101582527160645,
+  "mahal_thresh_ood": 16.852304458618164,
+  "ood_rate_val": 0.01024428684003152,
+  "centroid_ratio_thresholds": {
+    "apple": 1.1013114183644344,
+    "banana": 1.0954386190632486,
+    "capsicum": 1.0405893188755988,
+    "cucumber": 1.0123508794247287,
+    "potato": 1.0085176142363397
+  },
   "min_laplacian_variance": 28.0,
   "min_brightness": 30.0,
   "max_brightness": 220.0,
   "min_coverage": 0.4,
-  "calibration_note": "All thresholds calibrated on validation split. unstable_range_thresh derived from real augmentation percentile. Test set not touched during training or calibration."
+  "calibration_note": "Data-calibrated on validation split: boundary_threshold, unstable_range_thresh, mahal thresholds, centroid_ratio_thresholds. Design constants (not calibrated): veg_confidence_threshold=0.70, veg_gap_threshold=0.15. Test set not touched during training or calibration."
 }
