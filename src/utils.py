@@ -20,19 +20,26 @@ def save_model(obj, path):
 def load_model(path):
     return joblib.load(path)
 
-def grade_from_score(score: float, config=None) -> str:
+def confidence_band(score: float, config=None) -> str:
     """
     Score in [0, 100] derived from SVM decision function distance.
     Higher score = further into the fresh region of feature space.
+
+    Returns a confidence band reflecting model certainty in the
+    fresh/rotten classification — NOT a validated freshness quality grade.
+    The binary fresh_label field is the primary actionable decision.
+
+    Bands (thresholds read from scoring_config["grade_thresholds"]):
+        High     >= truly_fresh  (default 85)
+        Medium   >= fresh        (default 65)
+        Low      >= moderate     (default 40)
+        Very Low  < moderate
     """
     thr = (config or {}).get("grade_thresholds", {})
-    t1  = thr.get("truly_fresh", 85)
-    t2  = thr.get("fresh",       65)
-    t3  = thr.get("moderate",    40)
-    if score >= t1:
-        return "Truly Fresh"
-    if score >= t2:
-        return "Fresh"
-    if score >= t3:
-        return "Moderate"
-    return "Rotten"
+    if score >= thr.get("truly_fresh", 85):
+        return "High"
+    if score >= thr.get("fresh", 65):
+        return "Medium"
+    if score >= thr.get("moderate", 40):
+        return "Low"
+    return "Very Low"

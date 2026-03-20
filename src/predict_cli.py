@@ -8,7 +8,7 @@ from extract_features import (
     extract_features, extract_handcrafted,
     model as deep_model, preprocess_input,
 )
-from utils import load_model, grade_from_score
+from utils import load_model, confidence_band
 
 MODEL_DIR = "models"
 
@@ -71,7 +71,6 @@ def preflight_checks(image_path, config):
     coverage     = compute_object_coverage(gray)
     min_coverage = config.get("min_coverage", 0.40)
     if coverage < min_coverage:
-        # Return OK but embed coverage warning in reason field for caller to log
         return "OK_LOW_COVERAGE", (
             f"Low object coverage ({coverage:.2f} < {min_coverage}). "
             f"Score may be affected by background. Not rejected."
@@ -113,7 +112,7 @@ def preprocess_features(feats, vt, scaler, selected):
 
 
 # ─────────────────────────────────────────────────────────────
-# Score normalization  (grade_from_score stays pure in utils.py)
+# Score normalization  (confidence_band stays pure in utils.py)
 # ─────────────────────────────────────────────────────────────
 
 def normalize_score(raw, bounds):
@@ -198,12 +197,12 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     status, reason = preflight_checks(image_path, cfg)
     if status == "UNRELIABLE":
         result = {
-            "state"      : "UNRELIABLE",
-            "reason"     : reason,
-            "score"      : None,
-            "raw"        : None,
-            "fresh_label": None,
-            "grade"      : None,
+            "state"                    : "UNRELIABLE",
+            "reason"                   : reason,
+            "score"                    : None,
+            "raw"                      : None,
+            "fresh_label"              : None,
+            "freshness_confidence_band": None,
         }
         print(f"[UNRELIABLE] Pre-flight failed: {reason}")
         return result
@@ -228,17 +227,15 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     veg_gap_thresh  = cfg.get("veg_gap_threshold",        0.15) * 100.0
     veg_confident   = (veg_conf >= veg_conf_thresh) and (conf_gap >= veg_gap_thresh)
 
-    per_veg = cfg["per_veg_bounds"]
-    globl   = cfg["global_bounds"]
-    bounds  = per_veg.get(veg_name, globl) if veg_confident else globl
-    norm_source = "per-veg" if (veg_confident and veg_name in per_veg) else "global"
-
     # ── Class-consistency centroid check ────────────────────
+    # C3 FIX: moved before per-veg bounds selection.
+    # A confidently wrong vegetable prediction must not apply the wrong
+    # vegetable's p5/p95 normalization anchors to the freshness score.
     # Detects confident but semantically wrong classifications.
     # Computes ratio: dist_to_predicted_centroid / dist_to_second_best_centroid.
     # If ratio > threshold, the sample is not clearly in the predicted class
     # cluster — flag as class-inconsistent even if confidence is high.
-    # This is a sanity check only — never used for scoring.
+    # This is a sanity check only — never used for scoring directly.
     x_flat = Xfinal.flatten()
     dists_to_centroids  = np.linalg.norm(class_centroids - x_flat, axis=1)
     sorted_centroid_idx = np.argsort(dists_to_centroids)
@@ -253,13 +250,23 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     centroid_ratio_thresh = float(per_class_thresholds.get(veg_name, 1.0))
     class_inconsistent    = centroid_ratio > centroid_ratio_thresh
 
+    # ── Per-vegetable bound selection ───────────────────────
+    # C3 FIX: per-veg bounds require BOTH veg_confident AND not
+    # class_inconsistent.  Either failure falls back to global bounds
+    # to avoid applying a wrong vegetable's normalization distribution.
+    per_veg = cfg["per_veg_bounds"]
+    globl   = cfg["global_bounds"]
+    use_per_veg = veg_confident and not class_inconsistent
+    bounds      = per_veg.get(veg_name, globl) if use_per_veg else globl
+    norm_source = "per-veg" if (use_per_veg and veg_name in per_veg) else "global"
+
     # ── Freshness signal ────────────────────────────────────
     raw         = float(fresh_svm.decision_function(Xfinal)[0])
     score       = normalize_score(raw, bounds)
     fresh_class = int(fresh_svm.predict(Xfinal)[0])
     fresh_label = "Fresh" if fresh_class == 1 else "Rotten"
 
-    # ── Mahalanobis (OOD flag only) ─────────────────────────
+    # ── Mahalanobis (OOD flag only — never used for scoring) ─
     dist  = mahalanobis_dist(Xfinal, train_mean, train_precision)
     zone  = mahal_zone(dist,
                        cfg["mahal_thresh_caution"],
@@ -299,12 +306,14 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     boundary_thresh = cfg["boundary_threshold"]
     near_boundary   = abs(raw) < boundary_thresh
 
-    # ── Fix 4 — High-confidence override ───────────────────
+    # ── High-confidence override ────────────────────────────
     # When veg confidence > 95%, raw is far from boundary, and
     # no actual class flip occurs under augmentation, the system
     # has strong multi-signal evidence that the prediction is
     # correct. A moderate score range alone should not suppress
     # the result. Force RELIABLE in this case.
+    # class_inconsistent gates this: a centroid-failing prediction
+    # must not override the uncertainty gate even at high confidence.
     high_conf_override = (
         veg_conf > 95.0
         and not near_boundary
@@ -323,7 +332,7 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     # Level 2 — decision validity
     #   near_boundary OR severe sensitive_only OR low veg confidence
     #   OR class_inconsistent (centroid sanity check)
-    #   → score valid, suppress class and grade only
+    #   → score valid, suppress class and band only
     #   Exception: high_conf_override skips this too
     #
     if high_conf_override:
@@ -332,7 +341,8 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     else:
         score_unreliable    = unstable or is_ood
         decision_unreliable = (near_boundary or sensitive_only
-                               or (not veg_confident) or class_inconsistent)
+                       or (not veg_confident) or class_inconsistent
+                       or (conf_gap < 10))
 
     warnings = []
 
@@ -347,7 +357,8 @@ def predict(image_path: str, compute_uncertainty: bool = True):
             f"CLASS INCONSISTENCY — centroid ratio={centroid_ratio:.3f} "
             f"(threshold={centroid_ratio_thresh:.3f}). "
             f"Sample is not clearly in the {veg_name} cluster. "
-            f"Vegetable prediction may be wrong despite high confidence."
+            f"Global normalization bounds applied; vegetable prediction "
+            f"may be wrong despite high confidence."
         )
     if not veg_confident:
         warnings.append(
@@ -388,51 +399,51 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     if score_unreliable:
         # Invalidate score entirely — no hidden values
         result = {
-            "state"      : "UNRELIABLE",
-            "veg"        : veg_name,
-            "veg_conf"   : veg_conf,
-            "score"      : None,
-            "raw"        : None,
-            "fresh_label": None,
-            "grade"      : None,
-            "mahal_dist" : dist,
-            "mahal_zone" : zone,
-            "warnings"   : warnings,
+            "state"                    : "UNRELIABLE",
+            "veg"                      : veg_name,
+            "veg_conf"                 : veg_conf,
+            "score"                    : None,
+            "raw"                      : None,
+            "fresh_label"              : None,
+            "freshness_confidence_band": None,
+            "mahal_dist"               : dist,
+            "mahal_zone"               : zone,
+            "warnings"                 : warnings,
         }
 
     elif decision_unreliable:
-        # Score is valid; decision (class + grade) is not
+        # Score is valid; decision (class + band) is not
         result = {
-            "state"      : "TENTATIVE",
-            "veg"        : veg_name,
-            "veg_conf"   : veg_conf,
-            "score"      : score,
-            "score_range": score_range,
-            "raw"        : raw,
-            "fresh_label": None,   # tentative — never shown as hard label
-            "grade"      : None,
-            "norm_source": norm_source,
-            "mahal_dist" : dist,
-            "mahal_zone" : zone,
-            "warnings"   : warnings,
+            "state"                    : "TENTATIVE",
+            "veg"                      : veg_name,
+            "veg_conf"                 : veg_conf,
+            "score"                    : score,
+            "score_range"              : score_range,
+            "raw"                      : raw,
+            "fresh_label"              : None,   # tentative — never shown as hard label
+            "freshness_confidence_band": None,
+            "norm_source"              : norm_source,
+            "mahal_dist"               : dist,
+            "mahal_zone"               : zone,
+            "warnings"                 : warnings,
         }
 
     else:
         # Fully reliable
-        grade = grade_from_score(score, cfg)   # thresholds sourced from scoring_config
+        band = confidence_band(score, cfg)   # thresholds sourced from scoring_config
         result = {
-            "state"      : "RELIABLE",
-            "veg"        : veg_name,
-            "veg_conf"   : veg_conf,
-            "score"      : score,
-            "score_range": score_range,
-            "raw"        : raw,
-            "fresh_label": fresh_label,
-            "grade"      : grade,
-            "norm_source": norm_source,
-            "mahal_dist" : dist,
-            "mahal_zone" : zone,
-            "warnings"   : warnings,
+            "state"                    : "RELIABLE",
+            "veg"                      : veg_name,
+            "veg_conf"                 : veg_conf,
+            "score"                    : score,
+            "score_range"              : score_range,
+            "raw"                      : raw,
+            "fresh_label"              : fresh_label,
+            "freshness_confidence_band": band,
+            "norm_source"              : norm_source,
+            "mahal_dist"               : dist,
+            "mahal_zone"               : zone,
+            "warnings"                 : warnings,
         }
 
     # ── Print ───────────────────────────────────────────────
@@ -449,8 +460,8 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     if result["fresh_label"] is not None:
         print(f"Freshness : {result['fresh_label']}")
 
-    if result["grade"] is not None:
-        print(f"Grade     : {result['grade']}")
+    if result["freshness_confidence_band"] is not None:
+        print(f"Confidence: {result['freshness_confidence_band']}")
 
     print(f"Mahal     : {dist:.3f}  [{zone}]")
 

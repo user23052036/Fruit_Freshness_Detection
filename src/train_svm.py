@@ -30,7 +30,7 @@ def _load_split(split, vt, scaler, selected):
 
 
 # ─────────────────────────────────────────────────────────────
-# Per-vegetable decision bounds (from training decisions)
+# Per-vegetable decision bounds (from validation decisions)
 # ─────────────────────────────────────────────────────────────
 
 def compute_per_veg_bounds(decisions, y_veg, veg_classes):
@@ -91,6 +91,10 @@ def calibrate_boundary_threshold(val_decisions, y_fresh_val):
     """
     Sweep abs(decision) thresholds on VAL SET.
     Find threshold where misclassification rate first exceeds 10%.
+
+    NOTE (C4): this is a heuristic sweep — boundary_threshold is
+    heuristic (not formally guaranteed).  For a coverage-maximising
+    alternative see threshold_selection.select_thresholds.
     """
     thresholds  = np.arange(0.05, 1.55, 0.05)
     best_thresh = 0.5
@@ -309,7 +313,6 @@ def calibrate_mahalanobis_thresholds(X_final_train,
     return thresh_caution, thresh_ood, ood_rate_val
 
 
-
 # ─────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────
@@ -356,27 +359,16 @@ def main():
     save_model(fresh_model, os.path.join(MODEL_DIR, "fresh_svm.joblib"))
     print("[DONE] Freshness classifier saved.")
 
-    # ── Training decisions → bounds ──────────────────────────
+    # ── Training decisions (stability diagnostic only) ───────
+    # C2 FIX: train_decisions are used ONLY for the p5/p95 KFold
+    # stability diagnostic below.  Normalization bounds are anchored
+    # to validation decisions: training margins are inflated by model
+    # fit and do not represent the distribution seen at inference.
     train_decisions = fresh_model.decision_function(X_train)
 
-    global_bounds = {
-        "p5"      : float(np.percentile(train_decisions, 5)),
-        "p95"     : float(np.percentile(train_decisions, 95)),
-        "hard_min": float(train_decisions.min()),
-        "hard_max": float(train_decisions.max()),
-    }
+    veg_classes = le.classes_.tolist()
 
-    veg_classes    = le.classes_.tolist()
-    per_veg_bounds = compute_per_veg_bounds(
-        train_decisions, y_veg_train, veg_classes
-    )
-
-    print("[INFO] Per-vegetable bounds (from training):")
-    for veg, b in per_veg_bounds.items():
-        print(f"  {veg:<12}  p5={b['p5']:.4f}  p95={b['p95']:.4f}  "
-              f"hard_min={b['hard_min']:.4f}  hard_max={b['hard_max']:.4f}")
-
-    # ── p5/p95 stability check ───────────────────────────────
+    # ── p5/p95 stability check (training data) ───────────────
     check_bound_stability(X_train, y_veg_train, fresh_model, veg_classes)
 
     # ── ALL calibration on VALIDATION SPLIT ─────────────────
@@ -384,6 +376,28 @@ def main():
 
     val_decisions = fresh_model.decision_function(X_val)
 
+    # C2 FIX: global_bounds and per_veg_bounds now use validation-set
+    # decisions as anchors instead of training-set decisions.
+    # Training margins are inflated by the model's own fit; validation
+    # margins match the distribution encountered at inference.
+    global_bounds = {
+        "p5"      : float(np.percentile(val_decisions, 5)),
+        "p95"     : float(np.percentile(val_decisions, 95)),
+        "hard_min": float(val_decisions.min()),
+        "hard_max": float(val_decisions.max()),
+    }
+
+    per_veg_bounds = compute_per_veg_bounds(val_decisions, y_veg_val, veg_classes)
+
+    print("[INFO] Per-vegetable bounds (from validation):")
+    for veg, b in per_veg_bounds.items():
+        print(f"  {veg:<12}  p5={b['p5']:.4f}  p95={b['p95']:.4f}  "
+              f"hard_min={b['hard_min']:.4f}  hard_max={b['hard_max']:.4f}")
+
+    # C4: boundary_threshold uses heuristic sweep over |margin| < t.
+    # For a formal coverage-maximising alternative see threshold_selection.py
+    # (select_thresholds requires Mahalanobis val_dists computed later).
+    # boundary_threshold is heuristic (not formally guaranteed).
     boundary_thresh = calibrate_boundary_threshold(val_decisions, y_fresh_val)
     print(f"[INFO] Boundary threshold (val): {boundary_thresh:.4f}")
 
@@ -465,28 +479,33 @@ def main():
     # Fix 3: preflight thresholds now live in config — tunable without
     # code changes, consistent across training and deployment.
     scoring_config = {
-        "grade_thresholds"        : {"truly_fresh": 85, "fresh": 65, "moderate": 40},
-        "use_augmentation_gate"   : False,
-        "global_bounds"           : global_bounds,
-        "per_veg_bounds"          : per_veg_bounds,
-        "boundary_threshold"      : boundary_thresh,
-        "unstable_range_thresh"   : unstable_range_thresh,
-        "veg_confidence_threshold": veg_conf_thresh,   # 0.70 design constant
-        "veg_gap_threshold"       : veg_gap_thresh,    # 0.15 design constant
-        "veg_gate_source"         : "design_constant",
-        "mahal_thresh_caution"    : thresh_caution,
-        "mahal_thresh_ood"        : thresh_ood,
+        "grade_thresholds"          : {"truly_fresh": 85, "fresh": 65, "moderate": 40},
+        "use_augmentation_gate"     : False,
+        "global_bounds"             : global_bounds,
+        "per_veg_bounds"            : per_veg_bounds,
+        "boundary_threshold"        : boundary_thresh,
+        "unstable_range_thresh"     : unstable_range_thresh,
+        "veg_confidence_threshold"  : veg_conf_thresh,   # 0.70 design constant
+        "veg_gap_threshold"         : veg_gap_thresh,    # 0.15 design constant
+        "veg_gate_source"           : "design_constant",
+        "mahal_thresh_caution"      : thresh_caution,
+        "mahal_thresh_ood"          : thresh_ood,
         "ood_rate_val"              : ood_rate_val,
         "centroid_ratio_thresholds" : per_class_ratio_thresh,  # per-class, not global
         # Preflight thresholds — part of the trained system, not hardcoded
-        "min_laplacian_variance"  : 28.0,
-        "min_brightness"          : 30.0,
-        "max_brightness"          : 220.0,
-        "min_coverage"            : 0.40,
-        "calibration_note"        : (
-            "Data-calibrated on validation split: boundary_threshold, unstable_range_thresh, "
-            "mahal thresholds, centroid_ratio_thresholds. "
-            "Design constants (not calibrated): veg_confidence_threshold=0.70, veg_gap_threshold=0.15. "
+        "min_laplacian_variance"    : 28.0,
+        "min_brightness"            : 30.0,
+        "max_brightness"            : 220.0,
+        "min_coverage"              : 0.40,
+        "calibration_note"          : (
+            "Normalization bounds (global_bounds, per_veg_bounds): "
+            "anchored to validation-set decisions, not training (C2 fix). "
+            "boundary_threshold is heuristic (not formally guaranteed) — "
+            "see threshold_selection.py for formal alternative (C4). "
+            "Data-calibrated on validation split: boundary_threshold, "
+            "unstable_range_thresh, mahal thresholds, centroid_ratio_thresholds. "
+            "Design constants (not calibrated): "
+            "veg_confidence_threshold=0.70, veg_gap_threshold=0.15. "
             "Test set not touched during training or calibration."
         ),
     }

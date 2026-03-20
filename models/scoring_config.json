@@ -6,45 +6,45 @@
   },
   "use_augmentation_gate": false,
   "global_bounds": {
-    "p5": -2.4130322378683515,
-    "p95": 2.1183354357454784,
-    "hard_min": -3.321017046668672,
-    "hard_max": 3.1972835783607243
+    "p5": -2.420805398050672,
+    "p95": 2.0882256282780673,
+    "hard_min": -3.2165530721812967,
+    "hard_max": 3.036600369331121
   },
   "per_veg_bounds": {
     "apple": {
-      "p5": -2.501901375396444,
-      "p95": 2.1348154987984147,
-      "hard_min": -3.321017046668672,
-      "hard_max": 3.1972835783607243
+      "p5": -2.574218250387618,
+      "p95": 2.114327783667242,
+      "hard_min": -3.2165530721812967,
+      "hard_max": 2.917850661625036
     },
     "banana": {
-      "p5": -2.4724015524473235,
-      "p95": 2.1636198230868127,
-      "hard_min": -3.26911197894467,
-      "hard_max": 2.9228690505514496
+      "p5": -2.4323941106531013,
+      "p95": 2.10615606249416,
+      "hard_min": -2.9441290801412743,
+      "hard_max": 3.036600369331121
     },
     "capsicum": {
-      "p5": -1.451808794754237,
-      "p95": 2.1655879171644976,
-      "hard_min": -2.7297182881034683,
-      "hard_max": 2.450990308612228
+      "p5": -1.4356256044319777,
+      "p95": 2.1541943650408752,
+      "hard_min": -2.282908997024734,
+      "hard_max": 2.3112717880494538
     },
     "cucumber": {
-      "p5": -1.927403381680754,
-      "p95": 1.684360726900969,
-      "hard_min": -2.6363797853666178,
-      "hard_max": 2.3574293824550274
+      "p5": -1.7849074234693934,
+      "p95": 1.6414486379710367,
+      "hard_min": -2.014921607987892,
+      "hard_max": 1.7206871845085738
     },
     "potato": {
-      "p5": -1.81539664571247,
-      "p95": 1.7007925272308497,
-      "hard_min": -2.6207065928296736,
-      "hard_max": 2.293662804267413
+      "p5": -1.8388878991641373,
+      "p95": 1.7820843854996389,
+      "hard_min": -2.2838358534347147,
+      "hard_max": 2.02815354270642
     }
   },
   "boundary_threshold": 0.05,
-  "unstable_range_thresh": 32.473686025888085,
+  "unstable_range_thresh": 32.72144014540759,
   "veg_confidence_threshold": 0.7,
   "veg_gap_threshold": 0.15,
   "veg_gate_source": "design_constant",
@@ -62,5 +62,5 @@
   "min_brightness": 30.0,
   "max_brightness": 220.0,
   "min_coverage": 0.4,
-  "calibration_note": "Data-calibrated on validation split: boundary_threshold, unstable_range_thresh, mahal thresholds, centroid_ratio_thresholds. Design constants (not calibrated): veg_confidence_threshold=0.70, veg_gap_threshold=0.15. Test set not touched during training or calibration."
+  "calibration_note": "Normalization bounds (global_bounds, per_veg_bounds): anchored to validation-set decisions, not training (C2 fix). boundary_threshold is heuristic (not formally guaranteed) \u2014 see threshold_selection.py for formal alternative (C4). Data-calibrated on validation split: boundary_threshold, unstable_range_thresh, mahal thresholds, centroid_ratio_thresholds. Design constants (not calibrated): veg_confidence_threshold=0.70, veg_gap_threshold=0.15. Test set not touched during training or calibration."
 }
