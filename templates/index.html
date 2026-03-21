@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FreshGrade · Vegetable Freshness Grader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div id="loadingOverlay" style="display:none">
+  <div class="spinner"></div>
+  <div class="loading-steps">
+    <div>Running <span>EfficientNetB0</span> feature extraction…</div>
+    <div>Applying <span>SVM</span> classifiers…</div>
+    <div>Computing <span>Mahalanobis</span> OOD distance…</div>
+  </div>
+</div>
+
+<div class="wrapper">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="logo">🥦 <span>Fresh</span>Grade</div>
+      <div class="logo-sub">Dual-SVM Freshness Pipeline</div>
+    </div>
+    <button class="icon-btn" id="tryAgainBtn" style="display:none" onclick="resetApp()">↩ Try Another</button>
+  </div>
+
+  <!-- ── Upload Section ── -->
+  <div id="uploadSection">
+    <div class="upload-card" id="dropZone"
+         onclick="document.getElementById('fileInput').click()">
+      <div class="upload-icon">📷</div>
+      <div class="upload-title">Upload a vegetable photo</div>
+      <div class="upload-sub">Drag &amp; drop or click to select</div>
+      <div class="upload-sub">JPG · PNG · WebP supported</div>
+      <div class="upload-hint">apple · banana · capsicum · cucumber · potato</div>
+    </div>
+    <input type="file" id="fileInput" accept="image/*"
+           style="display:none" onchange="handleFileSelect(event)">
+  </div>
+
+  <!-- ── Result Section ── -->
+  <div id="resultSection">
+
+    <div class="result-grid">
+
+      <!-- Left: image + veg badge -->
+      <div class="img-panel">
+        <img id="previewImg" src="" alt="Uploaded image">
+        <div class="img-meta">
+          <div class="veg-badge" id="vegBadge">—</div>
+          <div class="conf-line" id="confLine">—</div>
+        </div>
+      </div>
+
+      <!-- Right: score card -->
+      <div class="score-card">
+        <div id="stateBadge" class="state-badge">—</div>
+
+        <!-- SVG gauge -->
+        <div class="gauge-wrap">
+          <svg width="210" height="115" viewBox="0 0 210 115">
+            <path d="M 25 100 A 80 80 0 0 1 185 100"
+                  fill="none" stroke="#1e2d42" stroke-width="14" stroke-linecap="round"/>
+            <path id="gaugeArc" d="M 25 100 A 80 80 0 0 1 185 100"
+                  fill="none" stroke="var(--accent)" stroke-width="14" stroke-linecap="round"
+                  style="stroke-dasharray:251;stroke-dashoffset:251;transition:stroke-dashoffset 1.1s ease,stroke .5s"/>
+            <g id="gaugeNeedle" transform="translate(105,100) rotate(-90)">
+              <line x1="0" y1="4" x2="0" y2="-68"
+                    stroke="white" stroke-width="2.5" stroke-linecap="round"
+                    style="transition:transform 1.1s ease"/>
+              <circle cx="0" cy="0" r="5" fill="white"/>
+            </g>
+            <text id="gaugeNum" x="105" y="88"
+                  text-anchor="middle"
+                  font-size="30" font-weight="700"
+                  fill="white" font-family="JetBrains Mono,monospace">—</text>
+            <text x="105" y="107"
+                  text-anchor="middle" font-size="9" fill="#4a6178"
+                  font-family="JetBrains Mono,monospace">/ 100</text>
+          </svg>
+        </div>
+        <div class="gauge-sub" id="gaugeSub"></div>
+
+        <!-- Dynamic result rows -->
+        <div id="scoreRows"></div>
+
+        <!-- Pipeline toggle -->
+        <button class="toggle-btn" id="pipelineToggle"
+                onclick="togglePipeline()">
+          <span>🔬</span>
+          <span id="toggleLabel">Show Pipeline</span>
+          <span id="toggleArrow">▼</span>
+        </button>
+      </div>
+    </div><!-- /result-grid -->
+
+    <!-- Warnings -->
+    <div id="warningsSection"></div>
+
+    <!-- ── Pipeline Section ── -->
+    <div id="pipelineSection">
+      <div class="pipeline-wrap">
+
+        <!-- Step tracker -->
+        <div class="step-track" id="stepTrack"></div>
+
+        <!-- Step content -->
+        <div id="stepContent"></div>
+
+        <!-- Navigation -->
+        <div class="step-nav">
+          <button class="nav-btn" id="prevBtn"
+                  onclick="changeStep(-1)" disabled>← Prev</button>
+          <span class="step-ctr" id="stepCtr">1 / 8</span>
+          <button class="nav-btn" id="nextBtn"
+                  onclick="changeStep(1)">Next →</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /resultSection -->
+
+</div><!-- /wrapper -->
+
+<script src="/static/js/app.js" defer></script>
+</body>
+</html>

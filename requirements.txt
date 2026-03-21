@@ -8,3 +8,6 @@ joblib
 matplotlib
 seaborn
 tensorflow
+fastapi 
+uvicorn[standard] 
+python-multipart
