@@ -19,13 +19,15 @@ def main():
 
     vt = load_model(os.path.join(MODEL_DIR, "variance.joblib"))
     scaler = load_model(os.path.join(MODEL_DIR, "scaler.joblib"))
-    selected = np.load(os.path.join(MODEL_DIR, "selected_features.npy"))
+    selected = np.load(os.path.join(MODEL_DIR, "selected_union_features.npy"))
 
     veg_model = load_model(os.path.join(MODEL_DIR, "veg_svm.joblib"))
     fresh_model = load_model(os.path.join(MODEL_DIR, "fresh_svm.joblib"))
     le = load_model(os.path.join(MODEL_DIR, "label_encoder.joblib"))
 
-    importances = np.load(os.path.join(MODEL_DIR, "feature_importances.npy"))
+    # Load both importance arrays (fresh-task and veg-task)
+    importances_fresh = np.load(os.path.join(MODEL_DIR, "feature_importances_fresh.npy"))
+    importances_veg   = np.load(os.path.join(MODEL_DIR, "feature_importances_veg.npy"))
 
     print("[INFO] Applying preprocessing pipeline...")
 
@@ -83,20 +85,32 @@ def main():
     plt.show()
 
     # ---------------------------------------
-    # Feature importance plot
+    # Feature importance plot — fresh task
     # ---------------------------------------
 
-    order = np.argsort(importances)[::-1][:20]
+    order_fresh = np.argsort(importances_fresh)[::-1][:20]
+    top_imp_fresh = importances_fresh[order_fresh]
 
-    top_importances = importances[order]
-
-    plt.figure(figsize=(8,5))
-    plt.bar(range(len(top_importances)), top_importances)
-
-    plt.title("Top Feature Importances (XGBoost Ranking)")
+    plt.figure(figsize=(8, 5))
+    plt.bar(range(len(top_imp_fresh)), top_imp_fresh)
+    plt.title("Top 20 Feature Importances — Freshness Task (XGBoost Gain)")
     plt.xlabel("Feature Rank")
     plt.ylabel("Importance")
+    plt.tight_layout()
+    plt.show()
 
+    # ---------------------------------------
+    # Feature importance plot — vegetable task
+    # ---------------------------------------
+
+    order_veg = np.argsort(importances_veg)[::-1][:20]
+    top_imp_veg = importances_veg[order_veg]
+
+    plt.figure(figsize=(8, 5))
+    plt.bar(range(len(top_imp_veg)), top_imp_veg, color="orange")
+    plt.title("Top 20 Feature Importances — Vegetable Task (XGBoost Gain)")
+    plt.xlabel("Feature Rank")
+    plt.ylabel("Importance")
     plt.tight_layout()
     plt.show()
 

@@ -14,14 +14,10 @@ MODEL_DIR = "models"
 
 
 # ─────────────────────────────────────────────────────────────
-# Pre-flight checks — enforcement, not documentation
+# Pre-flight checks
 # ─────────────────────────────────────────────────────────────
 
 def compute_object_coverage(gray):
-    """
-    Crude but sufficient reject signal.
-    Returns fraction of frame covered by the largest contour.
-    """
     blurred  = cv2.GaussianBlur(gray, (5, 5), 0)
     _, thresh = cv2.threshold(
         blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
@@ -36,38 +32,23 @@ def compute_object_coverage(gray):
 
 
 def preflight_checks(image_path, config):
-    """
-    Run before any feature extraction.
-    Returns ("OK", None) or ("UNRELIABLE", reason_string).
-
-    Coverage is a WARNING only — Otsu thresholding is too unreliable
-    on varied real-world backgrounds to justify a hard rejection.
-    Blur and brightness are enforced as hard rejects.
-    All thresholds read from scoring_config.json (written by train_svm.py).
-    """
     img = cv2.imread(image_path)
     if img is None:
         return "UNRELIABLE", "Image unreadable"
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # Blur — hard reject
     lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
     min_lap = config.get("min_laplacian_variance", 28.0)
     if lap_var < min_lap:
         return "UNRELIABLE", f"Image out of focus (lap_var={lap_var:.1f} < {min_lap})"
 
-    # Brightness — hard reject
     mean_b = float(gray.mean())
     min_b  = config.get("min_brightness", 30.0)
     max_b  = config.get("max_brightness", 220.0)
     if not (min_b <= mean_b <= max_b):
         return "UNRELIABLE", f"Brightness out of range ({mean_b:.1f} not in [{min_b}, {max_b}])"
 
-    # Coverage — WARNING only, not a reject.
-    # Otsu thresholding is unreliable on varied backgrounds (potato on wood,
-    # capsicum on dark surface, etc.). A low coverage number may mean the
-    # background was not separable, not that the produce is absent.
     coverage     = compute_object_coverage(gray)
     min_coverage = config.get("min_coverage", 0.40)
     if coverage < min_coverage:
@@ -86,7 +67,7 @@ def preflight_checks(image_path, config):
 def load_pipeline_artifacts():
     vt       = load_model(os.path.join(MODEL_DIR, "variance.joblib"))
     scaler   = load_model(os.path.join(MODEL_DIR, "scaler.joblib"))
-    selected = np.load(os.path.join(MODEL_DIR, "selected_features.npy"))
+    selected = np.load(os.path.join(MODEL_DIR, "selected_union_features.npy"))
     veg_svm  = load_model(os.path.join(MODEL_DIR, "veg_svm.joblib"))
     fresh_svm= load_model(os.path.join(MODEL_DIR, "fresh_svm.joblib"))
     le       = load_model(os.path.join(MODEL_DIR, "label_encoder.joblib"))
@@ -112,7 +93,7 @@ def preprocess_features(feats, vt, scaler, selected):
 
 
 # ─────────────────────────────────────────────────────────────
-# Score normalization  (confidence_band stays pure in utils.py)
+# Score normalization
 # ─────────────────────────────────────────────────────────────
 
 def normalize_score(raw, bounds):
@@ -124,7 +105,7 @@ def normalize_score(raw, bounds):
 
 
 # ─────────────────────────────────────────────────────────────
-# Mahalanobis distance (OOD flag only — never used for scoring)
+# Mahalanobis distance
 # ─────────────────────────────────────────────────────────────
 
 def mahalanobis_dist(x, mean, precision):
@@ -141,14 +122,14 @@ def mahal_zone(dist, thresh_caution, thresh_ood):
 
 
 # ─────────────────────────────────────────────────────────────
-# Augmentation — score range (NOT std) drives instability flag
+# Augmentation instability
 # ─────────────────────────────────────────────────────────────
 
 def augment_and_score(image_path, vt, scaler, selected,
                       fresh_svm, veg_name, cfg):
     img = cv2.imread(image_path)
     if img is None:
-        return 0.0, 0.0, [], []   # (score_range, score_std, scores, aug_raws)
+        return 0.0, 0.0, [], []
 
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     rgb = cv2.resize(rgb, (224, 224))
@@ -168,7 +149,7 @@ def augment_and_score(image_path, vt, scaler, selected,
     bounds  = per_veg.get(veg_name, globl)
 
     scores    = []
-    aug_raws  = []   # raw decision values per augmentation — used for sign-flip check
+    aug_raws  = []
     for aug in augmented:
         batch  = preprocess_input(np.expand_dims(aug.astype(np.float32), 0))
         deep_f = deep_model.predict(batch, verbose=0)[0].astype(np.float32)
@@ -228,14 +209,6 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     veg_confident   = (veg_conf >= veg_conf_thresh) and (conf_gap >= veg_gap_thresh)
 
     # ── Class-consistency centroid check ────────────────────
-    # C3 FIX: moved before per-veg bounds selection.
-    # A confidently wrong vegetable prediction must not apply the wrong
-    # vegetable's p5/p95 normalization anchors to the freshness score.
-    # Detects confident but semantically wrong classifications.
-    # Computes ratio: dist_to_predicted_centroid / dist_to_second_best_centroid.
-    # If ratio > threshold, the sample is not clearly in the predicted class
-    # cluster — flag as class-inconsistent even if confidence is high.
-    # This is a sanity check only — never used for scoring directly.
     x_flat = Xfinal.flatten()
     dists_to_centroids  = np.linalg.norm(class_centroids - x_flat, axis=1)
     sorted_centroid_idx = np.argsort(dists_to_centroids)
@@ -244,16 +217,11 @@ def predict(image_path: str, compute_uncertainty: bool = True):
                     for j in sorted_centroid_idx if j != veg_idx)
     centroid_ratio = float(d_pred / (d_second + 1e-9))
 
-    # Per-class threshold — each vegetable has its own calibrated bound
-    # reflecting its natural cluster spread in feature space.
     per_class_thresholds  = cfg.get("centroid_ratio_thresholds", {})
     centroid_ratio_thresh = float(per_class_thresholds.get(veg_name, 1.0))
     class_inconsistent    = centroid_ratio > centroid_ratio_thresh
 
     # ── Per-vegetable bound selection ───────────────────────
-    # C3 FIX: per-veg bounds require BOTH veg_confident AND not
-    # class_inconsistent.  Either failure falls back to global bounds
-    # to avoid applying a wrong vegetable's normalization distribution.
     per_veg = cfg["per_veg_bounds"]
     globl   = cfg["global_bounds"]
     use_per_veg = veg_confident and not class_inconsistent
@@ -266,7 +234,7 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     fresh_class = int(fresh_svm.predict(Xfinal)[0])
     fresh_label = "Fresh" if fresh_class == 1 else "Rotten"
 
-    # ── Mahalanobis (OOD flag only — never used for scoring) ─
+    # ── Mahalanobis OOD ─────────────────────────────────────
     dist  = mahalanobis_dist(Xfinal, train_mean, train_precision)
     zone  = mahal_zone(dist,
                        cfg["mahal_thresh_caution"],
@@ -307,34 +275,15 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     near_boundary   = abs(raw) < boundary_thresh
 
     # ── High-confidence override ────────────────────────────
-    # When veg confidence > 95%, raw is far from boundary, and
-    # no actual class flip occurs under augmentation, the system
-    # has strong multi-signal evidence that the prediction is
-    # correct. A moderate score range alone should not suppress
-    # the result. Force RELIABLE in this case.
-    # class_inconsistent gates this: a centroid-failing prediction
-    # must not override the uncertainty gate even at high confidence.
     high_conf_override = (
         veg_conf > 95.0
         and not near_boundary
         and not crosses_boundary
         and not is_ood
-        and not class_inconsistent   # do not override when class cluster is wrong
+        and not class_inconsistent
     )
 
     # ── Two-level uncertainty gate ──────────────────────────
-    #
-    # Level 1 — score validity
-    #   unstable (high range + raw crosses 0) OR is_ood
-    #   → score itself unreliable, invalidate entirely
-    #   Exception: high_conf_override skips this
-    #
-    # Level 2 — decision validity
-    #   near_boundary OR severe sensitive_only OR low veg confidence
-    #   OR class_inconsistent (centroid sanity check)
-    #   → score valid, suppress class and band only
-    #   Exception: high_conf_override skips this too
-    #
     if high_conf_override:
         score_unreliable    = False
         decision_unreliable = False
@@ -357,8 +306,7 @@ def predict(image_path: str, compute_uncertainty: bool = True):
             f"CLASS INCONSISTENCY — centroid ratio={centroid_ratio:.3f} "
             f"(threshold={centroid_ratio_thresh:.3f}). "
             f"Sample is not clearly in the {veg_name} cluster. "
-            f"Global normalization bounds applied; vegetable prediction "
-            f"may be wrong despite high confidence."
+            f"Global normalization bounds applied."
         )
     if not veg_confident:
         warnings.append(
@@ -380,9 +328,9 @@ def predict(image_path: str, compute_uncertainty: bool = True):
     if sensitive_only:
         warnings.append(
             f"INPUT SENSITIVITY — score range={score_range:.2f} pts "
-            f"(threshold={unstable_range_thresh:.2f}, severe cutoff={unstable_range_thresh*1.5:.2f}). "
-            f"All augmentations stay {'fresh' if raw > 0 else 'rotten'} side. "
-            f"Prediction consistent but score sensitive to imaging conditions."
+            f"(threshold={unstable_range_thresh:.2f}, "
+            f"severe cutoff={unstable_range_thresh*1.5:.2f}). "
+            f"All augmentations stay {'fresh' if raw > 0 else 'rotten'} side."
         )
     if is_ood:
         warnings.append(
@@ -395,9 +343,8 @@ def predict(image_path: str, compute_uncertainty: bool = True):
             f"[{cfg['mahal_thresh_caution']:.3f}, {cfg['mahal_thresh_ood']:.3f}]."
         )
 
-    # ── Build result under strict contract ──────────────────
+    # ── Build result ─────────────────────────────────────────
     if score_unreliable:
-        # Invalidate score entirely — no hidden values
         result = {
             "state"                    : "UNRELIABLE",
             "veg"                      : veg_name,
@@ -412,7 +359,6 @@ def predict(image_path: str, compute_uncertainty: bool = True):
         }
 
     elif decision_unreliable:
-        # Score is valid; decision (class + band) is not
         result = {
             "state"                    : "TENTATIVE",
             "veg"                      : veg_name,
@@ -420,7 +366,7 @@ def predict(image_path: str, compute_uncertainty: bool = True):
             "score"                    : score,
             "score_range"              : score_range,
             "raw"                      : raw,
-            "fresh_label"              : None,   # tentative — never shown as hard label
+            "fresh_label"              : None,
             "freshness_confidence_band": None,
             "norm_source"              : norm_source,
             "mahal_dist"               : dist,
@@ -429,8 +375,7 @@ def predict(image_path: str, compute_uncertainty: bool = True):
         }
 
     else:
-        # Fully reliable
-        band = confidence_band(score, cfg)   # thresholds sourced from scoring_config
+        band = confidence_band(score, cfg)
         result = {
             "state"                    : "RELIABLE",
             "veg"                      : veg_name,

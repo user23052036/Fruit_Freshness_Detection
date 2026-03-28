@@ -158,7 +158,7 @@ def main():
 
     vt       = load_model(os.path.join(MODEL_DIR, "variance.joblib"))
     scaler   = load_model(os.path.join(MODEL_DIR, "scaler.joblib"))
-    selected = np.load(os.path.join(MODEL_DIR, "selected_features.npy"))
+    selected = np.load(os.path.join(MODEL_DIR, "selected_union_features.npy"))
 
     veg_model   = load_model(os.path.join(MODEL_DIR, "veg_svm.joblib"))
     fresh_model = load_model(os.path.join(MODEL_DIR, "fresh_svm.joblib"))
