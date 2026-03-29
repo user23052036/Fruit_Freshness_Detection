@@ -6,61 +6,98 @@
   },
   "use_augmentation_gate": false,
   "global_bounds": {
-    "p5": -2.420805398050672,
-    "p95": 2.0882256282780673,
-    "hard_min": -3.2165530721812967,
-    "hard_max": 3.036600369331121
+    "p5": -2.2677709503578214,
+    "p95": 1.9305944371200534,
+    "hard_min": -3.2612718331375232,
+    "hard_max": 2.6114146463302985
   },
   "per_veg_bounds": {
     "apple": {
-      "p5": -2.574218250387618,
-      "p95": 2.114327783667242,
-      "hard_min": -3.2165530721812967,
-      "hard_max": 2.917850661625036
+      "p5": -2.5635147109459187,
+      "p95": 2.1197872723767004,
+      "hard_min": -3.2612718331375232,
+      "hard_max": 2.6114146463302985
     },
     "banana": {
-      "p5": -2.4323941106531013,
-      "p95": 2.10615606249416,
-      "hard_min": -2.9441290801412743,
-      "hard_max": 3.036600369331121
+      "p5": -2.017309187410806,
+      "p95": 1.8216616104890975,
+      "hard_min": -2.6101484543650164,
+      "hard_max": 2.596201547335323
     },
     "capsicum": {
-      "p5": -1.4356256044319777,
-      "p95": 2.1541943650408752,
-      "hard_min": -2.282908997024734,
-      "hard_max": 2.3112717880494538
+      "p5": -1.285250277486397,
+      "p95": 1.8388801076788963,
+      "hard_min": -1.9305919484135874,
+      "hard_max": 2.086807010175488
     },
     "cucumber": {
-      "p5": -1.7849074234693934,
-      "p95": 1.6414486379710367,
-      "hard_min": -2.014921607987892,
-      "hard_max": 1.7206871845085738
+      "p5": -1.6697229771468418,
+      "p95": 1.6762324413991714,
+      "hard_min": -1.9224858661741222,
+      "hard_max": 2.056570306737741
     },
     "potato": {
-      "p5": -1.8388878991641373,
-      "p95": 1.7820843854996389,
-      "hard_min": -2.2838358534347147,
-      "hard_max": 2.02815354270642
+      "p5": -1.886924237304013,
+      "p95": 1.656507255043233,
+      "hard_min": -2.7630982078853044,
+      "hard_max": 2.0913506864076026
     }
   },
-  "boundary_threshold": 0.05,
-  "unstable_range_thresh": 32.72144014540759,
+  "boundary_threshold": 0.0,
+  "unstable_range_thresh": 36.0,
   "veg_confidence_threshold": 0.7,
   "veg_gap_threshold": 0.15,
   "veg_gate_source": "design_constant",
-  "mahal_thresh_caution": 13.101582527160645,
-  "mahal_thresh_ood": 16.852304458618164,
-  "ood_rate_val": 0.01024428684003152,
+  "mahal_thresh_caution": 24.166841506958008,
+  "mahal_thresh_ood": 30.4375,
+  "ood_rate_val": 0.018124507486209612,
   "centroid_ratio_thresholds": {
-    "apple": 1.1013114183644344,
-    "banana": 1.0954386190632486,
-    "capsicum": 1.0405893188755988,
-    "cucumber": 1.0123508794247287,
-    "potato": 1.0085176142363397
+    "apple": 1.0220064306830265,
+    "banana": 0.9552089726605535,
+    "capsicum": 0.9973336603278663,
+    "cucumber": 1.0256738730795287,
+    "potato": 0.9739600351878379
   },
   "min_laplacian_variance": 28.0,
   "min_brightness": 30.0,
   "max_brightness": 220.0,
   "min_coverage": 0.4,
-  "calibration_note": "Normalization bounds (global_bounds, per_veg_bounds): anchored to validation-set decisions, not training (C2 fix). boundary_threshold is heuristic (not formally guaranteed) \u2014 see threshold_selection.py for formal alternative (C4). Data-calibrated on validation split: boundary_threshold, unstable_range_thresh, mahal thresholds, centroid_ratio_thresholds. Design constants (not calibrated): veg_confidence_threshold=0.70, veg_gap_threshold=0.15. Test set not touched during training or calibration."
+  "svm_best_params": {
+    "vegetable": {
+      "C": 10.0,
+      "gamma": 0.001
+    },
+    "freshness": {
+      "C": 10.0,
+      "gamma": "scale"
+    }
+  },
+  "svm_cv_scores": {
+    "vegetable": 0.9958345374074129,
+    "freshness": 0.9864904789426454
+  },
+  "val_split_sizes": {
+    "cal_val": 634,
+    "thr_val": 635
+  },
+  "val_accuracy": {
+    "veg_cal_val": 1.0,
+    "veg_thr_val": 1.0,
+    "fresh_cal_val": 0.9858044164037855,
+    "fresh_thr_val": 0.9858267716535433
+  },
+  "threshold_selection_result": {
+    "feasible": true,
+    "T_boundary": 0.0,
+    "T_instability": 36.0,
+    "risk": 0.01881720430107527,
+    "coverage": 0.9789473684210527,
+    "n_reliable": 372,
+    "n_min_used": 20,
+    "epsilon": 0.1,
+    "subset_size": 380,
+    "data_source": "thr_val (disjoint from cal_val)"
+  },
+  "infeasibility_diagnosis": {},
+  "calibration_note": "Normalization bounds from full val set (p5/p95 need enough samples). val split into cal_val (50%) and thr_val (50%) stratified by y_fresh (issue-2 leakage fix):   cal_val  \u2192 CalibratedClassifierCV(isotonic, FrozenEstimator(veg_base));   thr_val  \u2192 select_thresholds(epsilon=0.10) + aug stats. SVM: GridSearchCV 5-fold stratified, C=[1e-3..100] \u00d7 gamma=[1e-4..0.1,'scale'] (issue-4 fix). Infeasibility case + risk/coverage curve stored in infeasibility_diagnosis (issue-5 fix). Design constants: veg_confidence_threshold=0.70, veg_gap_threshold=0.15. Test set not touched."
 }

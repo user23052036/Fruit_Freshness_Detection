@@ -1,0 +1,156 @@
+{
+  "best_k": 200,
+  "proxy_best_k": 250,
+  "union_feature_count": 349,
+  "overlap_count": 51,
+  "fresh_only": 149,
+  "veg_only": 149,
+  "rbf_val_acc_fresh": 0.9858156028368794,
+  "rbf_val_acc_veg": 0.9992119779353822,
+  "best_svm_params_veg": {
+    "C": 10.0,
+    "gamma": 0.001
+  },
+  "best_svm_params_fresh": {
+    "C": 10.0,
+    "gamma": "scale"
+  },
+  "n_rank_seeds": 5,
+  "rank_seeds": [
+    42,
+    7,
+    123,
+    17,
+    99
+  ],
+  "k_candidates": [
+    50,
+    100,
+    150,
+    200,
+    250
+  ],
+  "sweep_rows": [
+    {
+      "k": 50,
+      "union": 98,
+      "fresh_val": 0.946414499605989,
+      "veg_val": 0.9850275807722616,
+      "combined": 0.9657210401891253,
+      "model": "LinearSVC"
+    },
+    {
+      "k": 100,
+      "union": 187,
+      "fresh_val": 0.9598108747044918,
+      "veg_val": 0.9913317572892041,
+      "combined": 0.975571315996848,
+      "model": "LinearSVC"
+    },
+    {
+      "k": 150,
+      "union": 270,
+      "fresh_val": 0.9661150512214342,
+      "veg_val": 0.9929078014184397,
+      "combined": 0.9795114263199369,
+      "model": "LinearSVC"
+    },
+    {
+      "k": 200,
+      "union": 349,
+      "fresh_val": 0.9653270291568163,
+      "veg_val": 0.9944838455476753,
+      "combined": 0.9799054373522458,
+      "model": "LinearSVC"
+    },
+    {
+      "k": 250,
+      "union": 432,
+      "fresh_val": 0.9661150512214342,
+      "veg_val": 0.9952718676122931,
+      "combined": 0.9806934594168637,
+      "model": "LinearSVC"
+    },
+    {
+      "k": 50,
+      "union": 98,
+      "rbf_fresh_val": 0.983451536643026,
+      "rbf_veg_val": 0.9944838455476753,
+      "combined": 0.9889676910953507,
+      "veg_params": {
+        "C": 10.0,
+        "gamma": "scale"
+      },
+      "fresh_params": {
+        "C": 10.0,
+        "gamma": 0.01
+      },
+      "model": "RBF-SVM-3fold"
+    },
+    {
+      "k": 100,
+      "union": 187,
+      "rbf_fresh_val": 0.9866036249014972,
+      "rbf_veg_val": 0.9968479117415288,
+      "combined": 0.991725768321513,
+      "veg_params": {
+        "C": 10.0,
+        "gamma": "scale"
+      },
+      "fresh_params": {
+        "C": 100.0,
+        "gamma": "scale"
+      },
+      "model": "RBF-SVM-3fold"
+    },
+    {
+      "k": 150,
+      "union": 270,
+      "rbf_fresh_val": 0.9858156028368794,
+      "rbf_veg_val": 0.9976359338061466,
+      "combined": 0.991725768321513,
+      "veg_params": {
+        "C": 10.0,
+        "gamma": "scale"
+      },
+      "fresh_params": {
+        "C": 10.0,
+        "gamma": "scale"
+      },
+      "model": "RBF-SVM-3fold"
+    },
+    {
+      "k": 200,
+      "union": 349,
+      "rbf_fresh_val": 0.9858156028368794,
+      "rbf_veg_val": 0.9992119779353822,
+      "combined": 0.9925137903861307,
+      "veg_params": {
+        "C": 10.0,
+        "gamma": 0.001
+      },
+      "fresh_params": {
+        "C": 10.0,
+        "gamma": "scale"
+      },
+      "model": "RBF-SVM-3fold"
+    },
+    {
+      "k": 250,
+      "union": 432,
+      "rbf_fresh_val": 0.9842395587076438,
+      "rbf_veg_val": 0.9976359338061466,
+      "combined": 0.9909377462568951,
+      "veg_params": {
+        "C": 10.0,
+        "gamma": 0.001
+      },
+      "fresh_params": {
+        "C": 10.0,
+        "gamma": "scale"
+      },
+      "model": "RBF-SVM-3fold"
+    }
+  ],
+  "note": "best_k confirmed by RBF-SVM GridSearchCV on val set (issue-1 fix). Feature importances averaged over 5 XGBoost seeds per task \u2014 computed ONCE at max_k, sliced per candidate (OPT-1/2). Grid: C=[1e-3,1e-2,0.1,1,10,100] x gamma=[1e-4,1e-3,1e-2,0.1,'scale'] (issue-4 fix). Phase-2 uses 3-fold GS sweep + 5-fold final refit (OPT-3). XGBoost n_estimators=100 (OPT-4). GS verbose=0 (OPT-5)."
+}
