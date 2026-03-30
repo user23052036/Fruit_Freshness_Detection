@@ -1,0 +1,322 @@
+(.venv) ┌─[midori@parrot]─[~/Desktop/mini-project]
+└──╼ $python extract_dataset_features.py
+python: can't open file '/home/midori/Desktop/mini-project/extract_dataset_features.py': [Errno 2] No such file or directory
+(.venv) ┌─[✗]─[midori@parrot]─[~/Desktop/mini-project]
+└──╼ $python src/extract_dataset_features.py 
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1773958659.990553  117243 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1773958660.189053  117243 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1773958661.263925  117243 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+E0000 00:00:1773958662.526479  117243 cuda_platform.cc:52] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+Scanning dataset...
+Total images: 12691
+Extracting features...
+Batches: 100%|███████████████████████████████████████| 100/100 [04:49<00:00,  2.90s/it]
+Saved feature matrix: (12691, 1312)
+(.venv) ┌─[midori@parrot]─[~/Desktop/mini-project]
+└──╼ $python src/train_split.py 
+[INFO] Loading Features...
+[SUCCESS] Split created — Train=8883  Val=1269  Test=2539
+[INFO] Test set must remain untouched until evaluate_models.py.
+(.venv) ┌─[midori@parrot]─[~/Desktop/mini-project]
+└──╼ $python src/preprocess_and_rank.py 
+[INFO] Using 8883 train samples for ranking.
+[INFO] VarianceThreshold: 1312 → 1304
+
+[INFO] Feature selection stability across seeds:
+  Seed 42 vs 7  overlap = 1.00
+  Seed 42 vs 123  overlap = 1.00
+  Seed 7 vs 123  overlap = 1.00
+[OK] Min overlap 1.00 >= 0.80. Selection is stable.
+
+[INFO] top_k sweep (diagnostic — does not change final selection):
+      k   CV_acc (5-fold)
+  -----  ----------------
+     50  0.9353 ± 0.0082
+    100  0.9559 ± 0.0060
+    150  0.9613 ± 0.0057
+    200  0.9686 ± 0.0041
+  [NOTE] If accuracy is flat across k values, k=100 is arbitrary.
+         This does not change the selected features — review only.
+[DONE] Selected top 100 features (freshness-only ranking).
+(.venv) ┌─[midori@parrot]─[~/Desktop/mini-project]
+└──╼ $python src/train_svm.py 
+[INFO] Loading artifacts...
+[INFO] Feature matrix — train: (8883, 100)  val: (1269, 100)
+[INFO] Training vegetable classifier...
+[DONE] Vegetable classifier saved.
+[INFO] Training freshness classifier...
+[DONE] Freshness classifier saved.
+[INFO] Per-vegetable bounds (from training):
+  apple         p5=-2.5019  p95=2.1348  hard_min=-3.3210  hard_max=3.1973
+  banana        p5=-2.4724  p95=2.1636  hard_min=-3.2691  hard_max=2.9229
+  capsicum      p5=-1.4518  p95=2.1656  hard_min=-2.7297  hard_max=2.4510
+  cucumber      p5=-1.9274  p95=1.6844  hard_min=-2.6364  hard_max=2.3574
+  potato        p5=-1.8154  p95=1.7008  hard_min=-2.6207  hard_max=2.2937
+
+[INFO] p5/p95 stability across folds:
+  apple         p5_cv=0.015  p95_cv=0.024  [OK]
+  banana        p5_cv=0.009  p95_cv=0.019  [OK]
+  capsicum      p5_cv=0.076  p95_cv=0.006  [OK]
+  cucumber      p5_cv=0.061  p95_cv=0.057  [OK]
+  potato        p5_cv=0.047  p95_cv=0.063  [OK]
+
+[INFO] Calibrating all thresholds on validation split...
+[INFO] Boundary threshold (val): 0.0500
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1773959643.195935  125090 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1773959643.223099  125090 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1773959643.863093  125090 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+E0000 00:00:1773959644.344577  125090 cuda_platform.cc:52] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+  [INFO] Calibration sampling: apple        60 images
+  [INFO] Calibration sampling: banana       60 images
+  [INFO] Calibration sampling: capsicum     60 images
+  [INFO] Calibration sampling: cucumber     60 images
+  [INFO] Calibration sampling: potato       60 images
+[INFO] Instability threshold (real aug P95): 32.4737
+       Calibrated on 300 val images (0 skipped), stratified across 5 vegetables.
+[INFO] Fitting Ledoit-Wolf covariance on training features...
+[INFO] Mahalanobis thresh_caution=13.102  thresh_ood=16.852
+[INFO] OOD rate on validation: 0.0102
+[INFO] Veg gate on val: 1255/1269 use per-veg bounds, 14 fall back to global.
+[INFO] Computing per-class centroids...
+[INFO] Per-class centroid ratio thresholds (P95 of correct val predictions):
+  apple         threshold=1.1013  (n=444)
+  banana        threshold=1.0954  (n=469)
+  capsicum      threshold=1.0406  (n=113)
+  cucumber      threshold=1.0124  (n=90)
+  potato        threshold=1.0085  (n=147)
+
+[DONE] Scoring config saved → models/scoring_config.json
+[INFO] Test set untouched. Run evaluate_models.py for final metrics.
+(.venv) ┌─[midori@parrot]─[~/Desktop/mini-project]
+└──╼ $python src/evaluate_models.py 
+[INFO] Loading test data...
+[INFO] Applying preprocessing pipeline...
+
+========== Vegetable Classification ==========
+Accuracy: 0.9894
+              precision    recall  f1-score   support
+
+       apple       1.00      0.99      1.00       896
+      banana       0.99      1.00      1.00       940
+    capsicum       0.99      0.98      0.98       227
+    cucumber       0.98      0.94      0.96       182
+      potato       0.95      0.98      0.97       294
+
+    accuracy                           0.99      2539
+   macro avg       0.98      0.98      0.98      2539
+weighted avg       0.99      0.99      0.99      2539
+
+Confusion Matrix:
+[[890   0   0   0   6]
+ [  1 939   0   0   0]
+ [  0   1 223   1   2]
+ [  0   3   2 171   6]
+ [  1   1   1   2 289]]
+
+========== Freshness Classification ==========
+Accuracy: 0.9799
+              precision    recall  f1-score   support
+
+           0       0.98      0.98      0.98      1323
+           1       0.98      0.98      0.98      1216
+
+    accuracy                           0.98      2539
+   macro avg       0.98      0.98      0.98      2539
+weighted avg       0.98      0.98      0.98      2539
+
+Confusion Matrix:
+[[1294   29]
+ [  22 1194]]
+
+  fresh_model.classes_ : [0 1]
+  Positive margin = class 1  (expected 1 = Fresh for correct AUC direction)
+  [OK] Sign direction confirmed. Positive margin = Fresh.
+  Freshness ROC-AUC (margin-based) : 0.9979
+  [Note] AUC uses decision_function() as ranking signal, not predict_proba().
+         Measures ordering reliability of the SVM margin.
+
+========== Inversion Rate Diagnostics ==========
+
+  [A] Global-bounds scores (baseline):
+    Raw margin inversion       : 0.0022  ← primary
+    Global-norm inversion      : 0.0022  ← primary
+    Grade-bucket inversion     : 0.0007  ← coarse only
+
+  [B] Deployed-path scores (mirrors CLI gate):
+    Raw margin inversion       : 0.0022  (same model)
+    Deployed-norm inversion    : 0.0031  ← primary
+    Grade-bucket inversion     : 0.0007  ← coarse only
+
+  [GATE EFFECT — GLOBAL]
+  [OK] Global gate delta = 0.0009. Negligible global effect.
+
+  [GATE EFFECT — PER-VEGETABLE]
+  apple         global_inv=0.0003  deployed_inv=0.0003  delta=+0.0000
+  banana        global_inv=0.0000  deployed_inv=0.0000  delta=+0.0000
+  capsicum      global_inv=0.0000  deployed_inv=0.0000  delta=+0.0000
+  cucumber      global_inv=0.0194  deployed_inv=0.0194  delta=+0.0000
+  potato        global_inv=0.0299  deployed_inv=0.0299  delta=+0.0000
+
+  Max per-veg delta : 0.0000
+  [STABLE] Global delta < 0.01 AND max per-veg delta < 0.02.
+           Gate is stable. Keep current conf/gap thresholds.
+
+  [NOTE] Subsequent per-veg analysis uses deployed-path scores.
+
+  Raw → Deployed-norm delta : +0.0009
+  [OK] Normalization has negligible effect on inversion.
+
+========== Per-Vegetable Diagnostics ==========
+  Veg             InvRaw   InvNorm   FreshMean   RottenMean    Delta
+  ------------  --------  --------  ----------  -----------  -------
+  apple           0.0003    0.0003       85.49        18.37    67.12
+  banana          0.0000    0.0000       88.46        14.91    73.55
+  capsicum        0.0000    0.0000       86.71        11.01    75.70
+  cucumber        0.0194    0.0194       82.03        23.02    59.00
+  potato          0.0299    0.0299       77.61        21.92    55.68
+
+========== OOD Rate Consistency ==========
+  OOD rate — validation : 0.0102
+  OOD rate — test       : 0.0091
+  [OK] OOD rates consistent across splits.
+
+--- p5/p95 Bounds (from scoring_config.json) ---
+  Global  p5=-2.4130  p95=2.1183
+  apple         p5=-2.5019  p95=2.1348  spread=4.6367
+  banana        p5=-2.4724  p95=2.1636  spread=4.6360
+  capsicum      p5=-1.4518  p95=2.1656  spread=3.6174
+  cucumber      p5=-1.9274  p95=1.6844  spread=3.6118
+  potato        p5=-1.8154  p95=1.7008  spread=3.5162
+
+========== Score Distribution ==========
+  Fresh  — mean=85.59  std=12.09  range=90.62
+  Rotten — mean=17.65  std=13.76  range=84.51
+  Delta (fresh - rotten mean) : 67.94 pts
+  Overlap (rotten > fresh mean): 0.0000
+
+========== Calibration Provenance ==========
+  All thresholds calibrated on validation split. unstable_range_thresh derived from real augmentation percentile. Test set not touched during training or calibration.
+
+========== State Distribution (Test Set) ==========
+  Total test samples : 2539
+  RELIABLE           :  2355  (92.8%)
+  TENTATIVE          :   161  (6.3%)
+  UNRELIABLE (OOD)   :    23  (0.9%)
+  [Note] Augmentation-instability UNRELIABLE not counted here.
+         Run predict_cli.py for full state distribution per image.
+  [OK] 92.8% of samples reach RELIABLE state.
+
+========== Gate Trigger Statistics ==========
+  (Augmentation-instability gate measured separately on val set below)
+
+  Gate                  Fires  Fire%  Catch_W  Block_C    Δ_acc    Δ_cov  Verdict
+  --------------------  -----  -----  -------  -------  -------  -------  ---------------
+  G1_OOD                   23   0.9%        1       22  -0.0007  +0.0567  REVIEW (coverage cost)
+  G2_near_boundary         17   0.7%        5       12  -0.0027  +0.0551  KEEP
+  G3_low_veg_conf          26   1.0%        4       22  -0.0019  +0.0571  KEEP
+
+  Baseline: acc=0.9839  coverage=0.928
+  Δ_acc: (acc when gate disabled) - baseline_acc
+  Δ_cov: (coverage when gate disabled) - baseline_coverage
+  Verdict rule (applied consistently):
+    KEEP              → Δ_acc < -0.001  (disabling hurts accuracy)
+    REMOVE            → Δ_acc ≥ -0.001 AND Δ_cov ≤ 0.005
+    REVIEW            → Δ_acc ≥ -0.001 AND Δ_cov > 0.005 (coverage cost only)
+    NEVER FIRES       → gate inactive on this test set
+
+  --- Gate Co-occurrence ---
+  G1_OOD ∩ G2_near_boundary: 1  (only G1_OOD: 22,  only G2_near_boundary: 16)
+  G1_OOD ∩ G3_low_veg_conf: 5  (only G1_OOD: 18,  only G3_low_veg_conf: 21)
+  G2_near_boundary ∩ G3_low_veg_conf: 3  (only G2_near_boundary: 14,  only G3_low_veg_conf: 23)
+  All three: 1
+  High co-occurrence = gates redundant for overlapping samples.
+  (Remove lowest-Catches gate in a co-occurring pair)
+
+  --- Silent Failures (veg wrong but RELIABLE) ---
+  Total silent failures          : 9
+  Catastrophic (veg+fresh wrong) : 0  ← true risk
+  Accidental correct (fresh ok)  : 9  ← lucky, not reliable
+  [OK] No catastrophic failures. Freshness signal robust to veg error.
+
+  --- Wrong-Veg Detection Breakdown ---
+  Total veg misclassifications   : 27
+  Caught by OOD only             : 4
+  Caught by centroid only        : 4
+  Caught by both                 : 0
+  Missed by both                 : 19  ← blind spots
+    Of blind spots, freshness also wrong: 2  ← true silent errors
+
+  --- Augmentation Gate (val set, stratified 40/veg) ---
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1773959802.829669  184808 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1773959802.863943  184808 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1773959803.517154  184808 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+E0000 00:00:1773959803.998434  184808 cuda_platform.cc:52] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+  Tested  : 200 (0 skipped), stratified 40/veg
+  Fires   : 3 (1.5%)
+  Catches : 0  (gate fires + pred wrong)
+  Blocks  : 3  (gate fires + pred correct)
+  Coverage cost: -0.015 (fraction blocked)
+  [!] Gate fires but catches no errors. REMOVE CANDIDATE on this data.
+
+  --- Score Calibration Sanity (per-veg means) ---
+  Veg           Fresh_mean   Rotten_mean    Delta  Note
+  ------------  ----------  ------------  -------  ----
+  apple              85.49         18.37    67.12  
+  banana             88.46         14.91    73.55  
+  capsicum           86.71         11.01    75.70  
+  cucumber           82.03         23.02    59.00  
+  potato             77.61         21.92    55.68  
+  [DESIGN] Per-vegetable normalization fits separate p5/p95 bounds per class.
+           This means scores ARE locally comparable within a vegetable class
+           but are NOT globally comparable across vegetables by design.
+           A score of 80 for banana and 80 for potato both mean 'high relative
+           to that vegetable's training distribution' — not the same absolute
+           freshness level. This is the expected consequence of per-class
+           calibration, not an inconsistency. If cross-vegetable comparability
+           is required, use global bounds throughout.
+
+  FEATURE SELECTION NOTE: XGBoost ranks on freshness-only labels.
+  Vegetable classifier reuses the same top-100 subset.
+  Union-of-top-features fix requires full retrain.
+  Deferred while veg accuracy remains 99.13%.
+
+========== Per-Vegetable State Distribution ==========
+  Veg               N    RELIABLE   TENTATIVE   UNRELIABLE  Note
+  ------------  -----  ----------  ----------  -----------  ----
+  apple           896    854 95.3%     39  4.4%      3  0.3%   
+  banana          940    892 94.9%     42  4.5%      6  0.6%   
+  capsicum        227    213 93.8%     13  5.7%      1  0.4%   
+  cucumber        182    151 83.0%     27 14.8%      4  2.2%   ← WEAK
+  potato          294    245 83.3%     40 13.6%      9  3.1%   ← WEAK
+
+========== Freshness Accuracy on RELIABLE Samples ==========
+  Overall freshness accuracy   : 0.9799
+  RELIABLE-only accuracy       : 0.9839
+  [OK] RELIABLE accuracy is +0.40% vs overall. Gate filters correctly — RELIABLE samples are more trustworthy.
+
+  Per-vegetable RELIABLE accuracy (baseline = 0.9839):
+  Veg           N_reliable     Acc  Note
+  ------------  ----------  ------  ----
+  apple                854  0.9871  
+  banana               892  1.0000  
+  capsicum             213  0.9906  
+  cucumber             151  0.9536  
+  potato               245  0.9265  ← 5.7% below RELIABLE baseline
+
+========== Limitations ==========
+  Score is a per-vegetable calibrated SVM margin proxy.
+  It proves class separation and ordering reliability between classes.
+  It does not prove correct intra-class ordering without continuous
+  ground-truth freshness labels (e.g. decay-day annotations).
+  The system does not guarantee detection of all condition violations.
+  Scores are only meaningful relative to the training distribution
+  and assume consistent imaging conditions.
