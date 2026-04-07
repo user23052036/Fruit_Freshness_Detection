@@ -229,7 +229,7 @@ function stageFeatures(fi) {
   return `
   <div class="step-card" id="s-features">
     <div class="step-title">Feature Extraction &amp; Preprocessing <span class="step-tag">stage 02</span></div>
-    <div class="step-desc">EfficientNetB0 (ImageNet weights, no top layer) produces 1280 deep features. 32 handcrafted features (colour stats, edge density, Laplacian sharpness, luminance histogram) are appended. Three preprocessing steps then reduce to the 100 most discriminative features.</div>
+    <div class="step-desc">EfficientNetB0 (ImageNet weights, no top layer) produces 1280 deep features. 32 handcrafted features (colour stats, edge density, Laplacian sharpness, luminance histogram) are appended. Three preprocessing steps reduce to 349 features — the union of top-200 by freshness-task ranking and top-200 by vegetable-task ranking, each averaged over 5 XGBoost seeds.</div>
     <div class="metric-row">
       <div class="metric-box">
         <div class="metric-label">EfficientNetB0</div>
@@ -255,7 +255,7 @@ function stageFeatures(fi) {
     </div>
     ${chk('⚡','VarianceThreshold',`${fi.total} → ${fi.after_vt}`,'removes zero-variance features','DONE','b-ok')}
     ${chk('📊','StandardScaler','mean = 0,  std = 1','fit on training data only — no leakage','DONE','b-ok')}
-    ${chk('🎯','XGBoost selection',`${fi.after_vt} → ${fi.after_sel}`,'top-k by freshness-ranked gain (seed=42)','DONE','b-ok')}
+    ${chk('🎯','XGBoost union selection',`${fi.after_vt} → ${fi.after_sel}`,'dual-task: top-200 fresh ∪ top-200 veg, 5-seed avg each','DONE','b-ok')}
   </div>`;
 }
 
@@ -281,7 +281,7 @@ function stageVegSVM(d, p) {
   return `
   <div class="step-card" id="s-veg">
     <div class="step-title">Vegetable Classifier (SVM) <span class="step-tag">stage 03</span></div>
-    <div class="step-desc">RBF-kernel SVM with probability=True (Platt scaling). Returns a confidence probability for all 5 classes. Both top-1 confidence AND the gap to second-best must exceed thresholds to use per-vegetable normalization bounds.</div>
+    <div class="step-desc">RBF-kernel SVM with isotonic probability calibration (CalibratedClassifierCV wrapping FrozenEstimator — SVC weights are frozen, only the isotonic calibration layer is fit on cal_val). Returns calibrated probabilities for all 5 classes. Both top-1 confidence AND the gap to second-best must exceed thresholds to use per-vegetable normalization bounds.</div>
     ${bars}
     <div style="margin-top:14px">
       ${chk('📊','Top-1 confidence',
@@ -332,9 +332,15 @@ function stageFreshSVM(d, p) {
         dir, raw>0 ? 'b-pass' : 'b-fail')}
       ${chk('📏','Distance from boundary',
         Math.abs(raw).toFixed(4),
-        `min reliable: ${p.boundary_thresh}  (near-boundary → TENTATIVE)`,
-        Math.abs(raw) >= p.boundary_thresh ? 'CLEAR' : 'NEAR BOUNDARY',
-        Math.abs(raw) >= p.boundary_thresh ? 'b-pass' : 'b-warn')}
+        p.boundary_thresh === 0
+          ? `T_boundary = 0.0 — boundary gate inactive (formally selected; no margin cutoff needed)`
+          : `min reliable: ${p.boundary_thresh}  (near-boundary → TENTATIVE)`,
+        p.boundary_thresh === 0
+          ? 'INACTIVE'
+          : Math.abs(raw) >= p.boundary_thresh ? 'CLEAR' : 'NEAR BOUNDARY',
+        p.boundary_thresh === 0
+          ? 'b-info'
+          : Math.abs(raw) >= p.boundary_thresh ? 'b-pass' : 'b-warn')}
     </div>
   </div>`;
 }
@@ -345,7 +351,7 @@ function stageCentroid(d, p) {
   return `
   <div class="step-card" id="s-centroid">
     <div class="step-title">Centroid Consistency Check <span class="step-tag">stage 05</span></div>
-    <div class="step-desc">C3 fix — runs before bounds selection. Computes ratio of (distance to predicted class centroid) ÷ (distance to second-closest centroid). A high ratio means the sample is not clearly inside the predicted cluster, even at high SVM confidence. Prevents wrong-vegetable bounds being applied silently.</div>
+    <div class="step-desc">Runs before bounds selection. Computes ratio of (distance to predicted class centroid) ÷ (distance to second-closest centroid). A high ratio means the sample is not clearly inside the predicted cluster, even at high SVM confidence. Prevents wrong-vegetable bounds being applied silently to a misclassified sample.</div>
     ${chk('🎯','Centroid ratio  (d_pred / d_second)',
       `${c.ratio.toFixed(4)}`,
       `threshold: ${c.threshold.toFixed(4)}  ·  d_pred=${c.d_pred}  d_second=${c.d_second}`,
@@ -367,7 +373,7 @@ function stageBounds(d, p) {
   return `
   <div class="step-card" id="s-bounds">
     <div class="step-title">Normalization Bounds Selection <span class="step-tag">stage 06</span></div>
-    <div class="step-desc">p5 and p95 percentiles of validation-set decision_function values anchor the [0,100] score scale. Anchored to validation, not training (C2 fix) — training margins are inflated by model fit. Per-vegetable bounds require veg_confident AND centroid-consistent; otherwise global bounds are used.</div>
+    <div class="step-desc">p5 and p95 percentiles of validation-set decision_function values anchor the [0,100] score scale. Computed on the FULL val set (not cal_val or thr_val) — the 50/50 cal/thr split can leave individual vegetable classes below the 50-sample minimum, causing unstable percentile estimates. Per-vegetable bounds require veg_confident AND centroid-consistent; otherwise global bounds are used.</div>
     <div class="chk" style="margin-bottom:8px;border-color:${srcCol}">
       <span class="chk-icon">📦</span>
       <span class="chk-label">Bounds source</span>
@@ -482,7 +488,7 @@ function stageGate(d, p) {
   return `
   <div class="step-card" id="s-gate">
     <div class="step-title">Reliability Gate &amp; Output <span class="step-tag">stage 08</span></div>
-    <div class="step-desc">Two-level gate. Level 1 (score validity): OOD or augmentation instability → UNRELIABLE. Level 2 (decision validity): near boundary / low veg confidence / centroid inconsistency → TENTATIVE. High-confidence override skips both levels when multi-signal evidence is strong.</div>
+    <div class="step-desc">Two-level gate. Level 1 (score validity): OOD → UNRELIABLE. Augmentation instability gate is currently disabled (use_augmentation_gate=False); T_instability=36.0 is stored for future activation. Level 2 (decision validity): near boundary / low veg confidence / centroid inconsistency → TENTATIVE. High-confidence override forces RELIABLE when veg_conf &gt; 95%, not near boundary, not OOD, and centroid is consistent.</div>
 
     <div style="margin-bottom:6px;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">OOD Detection</div>
     ${mbar}
