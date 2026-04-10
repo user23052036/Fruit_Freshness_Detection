@@ -99,7 +99,7 @@ function renderResults(d) {
   }
   if (d.score != null) addRow('Score', `${d.score.toFixed(2)} / 100`, '');
   if (d.raw != null)   addRow('Raw (SVM margin)', d.raw, '');
-  addRow(
+  if (d.mahal_dist != null) addRow(
     'Mahal Zone',
     `${d.mahal_dist}  [${d.mahal_zone}]`,
     `c-${d.mahal_zone}`
@@ -111,7 +111,11 @@ function renderResults(d) {
     ws.innerHTML += `<div class="warn-card">${w}</div>`;
   });
 
-  if (d.pipeline) buildPipeline(d);
+  const pipelineComplete = d.pipeline && d.pipeline.features;
+  const toggleBtn = document.getElementById('pipelineToggle');
+  if (toggleBtn) toggleBtn.style.display = pipelineComplete ? '' : 'none';
+
+  if (pipelineComplete) buildPipeline(d);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -124,7 +128,8 @@ function animateGauge(score) {
   const needle = document.getElementById('gaugeNeedle');
 
   let color = '#ef5350';
-  if (score >= 65) color = '#00d4aa';
+  if (score >= 85) color = '#66bb6a';
+  else if (score >= 65) color = '#00d4aa';
   else if (score >= 40) color = '#ffb74d';
   arc.style.stroke = color;
 
@@ -296,7 +301,7 @@ function stageVegSVM(d, p) {
         d.conf_gap >= p.veg_gap_thresh ? 'b-pass' : 'b-warn')}
       ${chk('🔓','Per-veg bounds eligibility',
         p.veg_confident ? 'both checks passed' : 'one or more failed',
-        'both conf + gap must pass',
+        'both conf + gap must pass — centroid also checked in stage 05',
         p.veg_confident ? 'ELIGIBLE' : 'FALLBACK',
         p.veg_confident ? 'b-pass' : 'b-warn')}
     </div>
@@ -402,7 +407,7 @@ function stageScore(sn) {
     {lo:85, hi:100, c:'var(--ok)'},
   ];
   const strip = bands.map(b => {
-    const active = sn.score >= b.lo && sn.score < b.hi;
+    const active = sn.score >= b.lo && (b.hi >= 100 ? sn.score <= b.hi : sn.score < b.hi);
     return `<div class="bs" style="flex:${b.hi-b.lo};background:${active?b.c:'rgba(255,255,255,0.06)'}"></div>`;
   }).join('');
 
@@ -493,6 +498,11 @@ function stageGate(d, p) {
     <div style="margin-bottom:6px;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">OOD Detection</div>
     ${mbar}
     <div style="margin-top:14px;margin-bottom:6px;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Gate checks</div>
+    ${chk('🔇','Augmentation instability gate',
+      p.aug_gate_enabled ? 'ENABLED' : 'DISABLED',
+      p.aug_gate_enabled ? 'fires when aug_range ≥ T_instability AND raw crosses zero' : 'use_augmentation_gate=False — T_instability=36.0 stored for future activation',
+      p.aug_gate_enabled ? 'ACTIVE' : 'INACTIVE',
+      p.aug_gate_enabled ? 'b-warn' : 'b-info')}
     ${gateRows}
     <div class="out-box" style="border-color:${stateCol}">
       <div style="font-size:10px;color:var(--dim);margin-bottom:10px;text-transform:uppercase;letter-spacing:1px">Final output</div>
