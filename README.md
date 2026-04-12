@@ -6,82 +6,126 @@ Rather than returning raw predictions with uncalibrated confidence scores, this 
 
 ---
 
+## Performance (Held-Out Test Set — 2,539 images)
+
+| Metric | Value |
+|--------|-------|
+| Vegetable classification accuracy | **99.61%** |
+| Freshness classification accuracy | **98.94%** |
+| Freshness ROC-AUC (margin-based) | **0.9994** |
+| Fresh score mean | 86.84 / 100 |
+| Rotten score mean | 16.10 / 100 |
+| Score delta (fresh − rotten) | 70.73 pts |
+| Overlap (rotten > fresh mean) | 0.00% |
+| RELIABLE predictions | **92.3%** of test images |
+| TENTATIVE predictions | 5.3% |
+| UNRELIABLE / OOD | 2.4% |
+| RELIABLE-only freshness accuracy | 98.98% |
+| Catastrophic silent failures | **0** |
+
+---
+
 ## Table of Contents
 
 1. [Supported Vegetables](#supported-vegetables)
-2. [System Overview](#system-overview)
-3. [Feature Extraction](#feature-extraction)
-4. [Dataset Splitting](#dataset-splitting)
-5. [Feature Selection](#feature-selection)
-6. [Model Training & Calibration](#model-training--calibration)
-7. [Threshold Selection](#threshold-selection)
-8. [Inference & Reliability Gating](#inference--reliability-gating)
-9. [Evaluation](#evaluation)
-10. [Directory Structure](#directory-structure)
-11. [Pipeline Execution](#pipeline-execution)
-12. [Output Reference](#output-reference)
-13. [Design Principles & Known Limitations](#design-principles--known-limitations)
+2. [Requirements](#requirements)
+3. [System Overview](#system-overview)
+4. [Feature Extraction](#feature-extraction)
+5. [Dataset Splitting](#dataset-splitting)
+6. [Feature Selection](#feature-selection)
+7. [Model Training & Calibration](#model-training--calibration)
+8. [Threshold Selection](#threshold-selection)
+9. [Inference & Reliability Gating](#inference--reliability-gating)
+10. [Evaluation](#evaluation)
+11. [Directory Structure](#directory-structure)
+12. [Pipeline Execution](#pipeline-execution)
+13. [Output Reference](#output-reference)
+14. [Design Principles & Known Limitations](#design-principles--known-limitations)
 
 ---
 
 ## Supported Vegetables
 
-The system is trained and calibrated specifically for five vegetable classes:
+| Vegetable | Freshness States | RELIABLE Rate | RELIABLE Accuracy |
+|-----------|-----------------|---------------|-------------------|
+| Apple | Fresh / Rotten | 95.5% | 99.07% |
+| Banana | Fresh / Rotten | 92.1% | 99.88% |
+| Capsicum | Fresh / Rotten | 91.6% | 100.00% |
+| Cucumber | Fresh / Rotten | 87.9% | 96.88% |
+| Potato | Fresh / Rotten | 86.1% | 96.05% |
 
-| Vegetable  | Freshness States |
-|------------|-----------------|
-| Apple      | Fresh / Rotten  |
-| Banana     | Fresh / Rotten  |
-| Capsicum   | Fresh / Rotten  |
-| Cucumber   | Fresh / Rotten  |
-| Potato     | Fresh / Rotten  |
+---
+
+## Requirements
+
+```bash
+pip install tensorflow scikit-learn xgboost opencv-python numpy tqdm joblib seaborn matplotlib
+```
+
+| Package | Purpose |
+|---------|---------|
+| `tensorflow` | EfficientNetB0 feature extraction |
+| `scikit-learn` | SVM, calibration, preprocessing, metrics |
+| `xgboost` | Feature importance ranking |
+| `opencv-python` | Image loading, handcrafted feature extraction |
+| `numpy` | Array operations |
+| `tqdm` | Progress bars during batch extraction |
+| `joblib` | Model serialisation |
+| `seaborn`, `matplotlib` | Visualisation (`visualize_results.py` only) |
+
+All scripts live in `src/` and are run from the **project root**:
+
+```bash
+cd ~/Desktop/mini-project
+python src/extract_dataset_features.py
+```
 
 ---
 
 ## System Overview
 
-The pipeline consists of six sequential stages, each implemented in a dedicated script:
+The pipeline has seven sequential stages, each implemented in a dedicated script under `src/`:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          FULL PIPELINE OVERVIEW                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-   extract_dataset_features.py          train_split.py
-   ┌──────────────────────────┐         ┌──────────────────────────┐
-   │  For every image in      │         │  Stratified 70/10/20     │
-   │  vegetable_Dataset/:     │──────►  │  split on (veg, fresh)   │
-   │  EfficientNetB0 [1280]   │         │  composite label         │
-   │  + Handcrafted  [32]     │         │  → X_train / X_val /     │
-   │  = Feature vec  [1312]   │         │    X_test  (.npy)        │
-   └──────────────────────────┘         └──────────────────────────┘
-                                                      │
-                                                      ▼
-   preprocess_and_rank.py                    train_svm.py
-   ┌──────────────────────────┐         ┌──────────────────────────┐
-   │  VarianceThreshold       │         │  GridSearchCV (RBF SVM)  │
-   │  + StandardScaler        │──────►  │  Vegetable SVM +         │
-   │  XGBoost ranking         │         │  Freshness SVM           │
-   │  (5 seeds × 2 tasks)     │         │  Isotonic calibration    │
-   │  Union feature set       │         │  OOD + bounds + gates    │
-   └──────────────────────────┘         └──────────────────────────┘
-                                                      │
-                                                      ▼
-   predict_cli.py / app.py              evaluate_models.py
-   ┌──────────────────────────┐         ┌──────────────────────────┐
-   │  Full inference path:    │         │  Held-out test set only  │
-   │  Preflight → OOD →       │         │  Classification metrics  │
-   │  Boundary → Augmentation │         │  Inversion rates         │
-   │  → RELIABLE/TENTATIVE/   │         │  Gate ablation study     │
-   │    UNRELIABLE            │         │  State distribution      │
-   └──────────────────────────┘         └──────────────────────────┘
+   src/extract_dataset_features.py       src/train_split.py
+   ┌──────────────────────────┐          ┌──────────────────────────┐
+   │  For every image in      │          │  Stratified 70/10/20     │
+   │  vegetable_Dataset/:     │───────►  │  split on (veg, fresh)   │
+   │  EfficientNetB0 [1280]   │          │  composite label         │
+   │  + Handcrafted  [32]     │          │  → X_train / X_val /     │
+   │  = Feature vec  [1312]   │          │    X_test  (.npy)        │
+   └──────────────────────────┘          └──────────────────────────┘
+                                                       │
+                                                       ▼
+   src/preprocess_and_rank.py                 src/train_svm.py
+   ┌──────────────────────────┐          ┌──────────────────────────┐
+   │  VarianceThreshold       │          │  GridSearchCV (RBF SVM)  │
+   │  + StandardScaler        │───────►  │  Vegetable SVM +         │
+   │  XGBoost ranking         │          │  Freshness SVM           │
+   │  (5 seeds × 2 tasks)     │          │  Isotonic calibration    │
+   │  Union feature set       │          │  OOD + bounds + gates    │
+   └──────────────────────────┘          └──────────────────────────┘
+                                                       │
+                                                       ▼
+   src/evaluate_models.py                 src/predict_cli.py
+   ┌──────────────────────────┐          ┌──────────────────────────┐
+   │  Held-out test set only  │          │  Full inference path:    │
+   │  Classification metrics  │          │  Preflight → Centroid →  │
+   │  Inversion rates         │          │  OOD → Boundary →        │
+   │  Gate ablation study     │          │  RELIABLE / TENTATIVE /  │
+   │  State distribution      │          │  UNRELIABLE              │
+   └──────────────────────────┘          └──────────────────────────┘
 ```
 
 ---
 
 ## Feature Extraction
 
-**Script:** `extract_dataset_features.py` | **Feature engine:** `extract_features.py`
+**Script:** `src/extract_dataset_features.py` | **Feature engine:** `src/extract_features.py`
 
 Each image is converted into a **1312-dimensional feature vector** by concatenating two complementary representations:
 
@@ -92,39 +136,38 @@ Each image is converted into a **1312-dimensional feature vector** by concatenat
 │   Input Image (any size, JPEG / PNG)                                │
 │         │                                                           │
 │         ▼  resize to 224×224, BGR→RGB                               │
-│   ┌─────────────────────┐   ┌───────────────────────────────────┐  │
-│   │   EfficientNetB0    │   │       Handcrafted Features        │  │
-│   │   (ImageNet weights)│   │                                   │  │
-│   │   include_top=False │   │  RGB channel means      [3]       │  │
-│   │   pooling="avg"     │   │  RGB channel stds       [3]       │  │
-│   │                     │   │  HSV channel means      [3]       │  │
-│   │   Global Average    │   │  HSV channel stds       [3]       │  │
-│   │   Pooling of the    │   │  Grayscale mean + std   [2]       │  │
-│   │   final conv layer  │   │  Edge density (Canny)   [1]       │  │
-│   │                     │   │  Laplacian variance     [1]       │  │
-│   │   Output: [1280]    │   │  Luminance histogram    [8]       │  │
-│   └─────────────────────┘   │  Zero-padding to 32    [7]       │  │
-│           │                 │                                   │  │
-│           │                 │  Output: [32]                     │  │
-│           │                 └───────────────────────────────────┘  │
-│           │                           │                            │
-│           └──────────┬────────────────┘                            │
-│                      ▼                                             │
-│           Concatenate → [1312]                                     │
+│   ┌─────────────────────┐   ┌───────────────────────────────────┐   │
+│   │   EfficientNetB0    │   │       Handcrafted Features        │   │
+│   │   (ImageNet weights)│   │                                   │   │
+│   │   include_top=False │   │  RGB channel means      [3]       │   │
+│   │   pooling="avg"     │   │  RGB channel stds       [3]       │   │
+│   │                     │   │  HSV channel means      [3]       │   │
+│   │   Global Average    │   │  HSV channel stds       [3]       │   │
+│   │   Pooling of the    │   │  Grayscale mean + std   [2]       │   │
+│   │   final conv layer  │   │  Edge density (Canny)   [1]       │   │
+│   │                     │   │  Laplacian variance     [1]       │   │
+│   │   Output: [1280]    │   │  Luminance histogram    [8]       │   │
+│   └─────────────────────┘   │  Zero-padding to 32    [7]        │   │
+│           │                 │                                   │   │
+│           │                 │  Output: [32]                     │   │
+│           │                 └───────────────────────────────────┘   │
+│           └──────────┬────────────────┘                             │
+│                      ▼                                              │
+│           Concatenate → [1312]                                      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Batch processing details:**
-- Images are loaded in parallel with `ThreadPoolExecutor`
-- EfficientNet inference runs in batches of 128 for GPU/memory efficiency
-- Failed image loads are silently filtered; final paths are saved aligned to the feature matrix
-- Outputs saved to `Features/`: `X.npy`, `y_veg.npy`, `y_fresh.npy`, `image_paths.npy`
+**Implementation details:**
+- Images loaded in parallel via `ThreadPoolExecutor` with `os.cpu_count()` workers
+- EfficientNet inference runs in batches of 128 for cache-efficient CPU execution
+- Failed image loads are silently filtered; surviving paths are saved row-aligned to the feature matrix
+- `image_paths.npy` is required by `src/train_svm.py` to run real EfficientNet augmentations during threshold calibration
 
 ---
 
 ## Dataset Splitting
 
-**Script:** `train_split.py`
+**Script:** `src/train_split.py`
 
 The dataset is split **once** into three disjoint sets using stratified sampling on a **composite label** `"{vegetable}_{freshness}"` to ensure each vegetable×freshness combination is proportionally represented in every split.
 
@@ -132,72 +175,64 @@ The dataset is split **once** into three disjoint sets using stratified sampling
 ┌──────────────────────────────────────────────────────────────────┐
 │                   STRATIFIED SPLITTING STRATEGY                  │
 │                                                                  │
-│  Composite label: "{vegetable}_{fresh/rotten}"                   │
-│  e.g. "banana_fresh", "potato_rotten", "cucumber_fresh", ...     │
+│  Composite label: "banana_fresh", "potato_rotten", ...           │
 │                                                                  │
-│  Full Dataset  (N samples)                                       │
+│  Full Dataset  (12,691 images)                                   │
 │  │                                                               │
-│  ├── 70%  →  Train Set     (model fitting)                       │
-│  ├── 10%  →  Val Set       (ALL calibration — thresholds,        │
-│  │                          bounds, OOD, augmentation stats)     │
-│  └── 20%  →  Test Set      ← LOCKED until evaluate_models.py    │
+│  ├── 70%  →  Train (8,883)   model fitting only                  │
+│  ├── 10%  →  Val   (1,269)   ALL calibration — thresholds,       │
+│  │                            bounds, OOD, augmentation stats    │
+│  └── 20%  →  Test  (2,539)   LOCKED until evaluate_models.py     │
 │                                                                  │
-│  IMPORTANT: The val set is NEVER used for final reporting.       │
-│  The test set is NEVER touched until evaluation.                 │
+│  The val set is NEVER used for final accuracy reporting.         │
+│  The test set is NEVER opened before evaluate_models.py.         │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The val set is later split further inside `train_svm.py` into disjoint **cal_val** (50%) and **thr_val** (50%) halves to prevent calibration leakage (see [Model Training](#model-training--calibration)).
+The val set is divided further inside `src/train_svm.py` into disjoint **cal_val** (634 samples) and **thr_val** (635 samples) halves to prevent calibration leakage.
 
 ---
 
 ## Feature Selection
 
-**Script:** `preprocess_and_rank.py`
+**Script:** `src/preprocess_and_rank.py`
 
-Feature selection reduces the 1312-dimensional space to a compact **union feature set** used by both SVMs. The process runs in two phases.
+Feature selection reduces the 1312-dimensional space to a compact **union feature set** used by both SVMs.
 
 ### Preprocessing
 
 ```
-X_train [N × 1312]
+X_train [8,883 × 1312]
       │
       ▼  VarianceThreshold(threshold=0.0)   — fit on train only
-      │  removes zero-variance columns
+      │  removes 8 zero-variance columns (zero-padding from handcrafted block)
       ▼
-X_reduced [N × M]   (M ≤ 1312)
+X_reduced [8,883 × 1304]
       │
       ▼  StandardScaler                     — fit on train only
-      │  zero mean, unit variance
+      │  zero mean, unit variance per feature
       ▼
-X_scaled [N × M]
+X_scaled [8,883 × 1304]
 ```
 
-### XGBoost Feature Ranking (5-seed average, 2 tasks)
+### XGBoost Feature Ranking (5-seed average, 2 independent tasks)
 
-XGBoost is run separately for each task to avoid using freshness-derived importance ranks for the vegetable classifier (or vice versa):
+XGBoost is run separately for each task. A freshness-only ranking denies the vegetable classifier the features it needs; a combined label mixes the two signals. Dual independent rankings with a union is the correct approach:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │              DUAL TASK FEATURE RANKING                          │
 │                                                                 │
-│  Task 1: FRESHNESS ranking                                      │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Seed 42  → XGBoost(100 trees) → gain importance [M]    │   │
-│  │  Seed  7  → XGBoost(100 trees) → gain importance [M]    │   │
-│  │  Seed 123 → XGBoost(100 trees) → gain importance [M]    │   │
-│  │  Seed 17  → XGBoost(100 trees) → gain importance [M]    │   │
-│  │  Seed 99  → XGBoost(100 trees) → gain importance [M]    │   │
-│  │                    Average → avg_imp_fresh [M]           │   │
-│  └──────────────────────────────────────────────────────────┘   │
+│  Task 1: FRESHNESS  (y_fresh labels)                            │
+│    Seeds [42, 7, 123, 17, 99] → XGBoost(100 trees) each         │
+│    Average gain importance → avg_imp_fresh [1304]               │
 │                                                                 │
-│  Task 2: VEGETABLE ranking  (same procedure)                    │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  5 seeds → average → avg_imp_veg [M]                    │   │
-│  └──────────────────────────────────────────────────────────┘   │
+│  Task 2: VEGETABLE  (y_veg labels, same procedure)              │
+│    5 seeds → average → avg_imp_veg [1304]                       │
 │                                                                 │
-│  Rankings computed ONCE at max(k), sliced cheaply per k.        │
-│  Total XGBoost fits: 5 seeds × 2 tasks = 10   (not 50)         │
+│  Rankings computed ONCE at max(k)=250, sliced per candidate.    │
+│  Total XGBoost fits: 5 × 2 = 10  (not 50)                       │
+│  Stability: min pairwise seed overlap = 1.000  [OK]             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -206,55 +241,30 @@ XGBoost is run separately for each task to avoid using freshness-derived importa
 ```
 k_candidates = {50, 100, 150, 200, 250}
 
-┌─────────────────────────────────────────────────────────────────┐
-│  PHASE 1 — Proxy Sweep (LinearSVC, fast)                        │
-│                                                                 │
-│  For each k in {50, 100, 150, 200, 250}:                        │
-│    sel_fresh = top-k from avg_imp_fresh                         │
-│    sel_veg   = top-k from avg_imp_veg                           │
-│    union_k   = sel_fresh ∪ sel_veg                              │
-│                                                                 │
-│    LinearSVC → val acc (freshness)                              │
-│    LinearSVC → val acc (vegetable)                              │
-│    combined  = (fresh_acc + veg_acc) / 2                        │
-│                                                                 │
-│    proxy_best_k = argmax(combined)                              │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  PHASE 2 — RBF SVM Confirmation (corrects proxy bias)           │
-│                                                                 │
-│  Sweep (3-fold GridSearchCV, all k candidates):                 │
-│    RBF SVM on union_k → val acc (freshness + vegetable)         │
-│    Param grid: C ∈ {1e-3,1e-2,0.1,1,10,100}                    │
-│               γ ∈ {1e-4,1e-3,1e-2,0.1,"scale"}                 │
-│                                                                 │
-│  Refit winner (5-fold GridSearchCV):                            │
-│    best_k_final = argmax(combined RBF val accuracy)             │
-│                                                                 │
-│  Stability check: pairwise seed overlap ≥ 0.80 required        │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  FINAL UNION FEATURE SET                                        │
-│                                                                 │
-│  selected_fresh = top-best_k from avg_imp_fresh                 │
-│  selected_veg   = top-best_k from avg_imp_veg                   │
-│                                                                 │
-│  union_set = selected_fresh ∪ selected_veg                      │
-│                                                                 │
-│  ┌────────────┬────────────┬────────────┐                       │
-│  │ Fresh-only │  Shared    │  Veg-only  │  = Union set          │
-│  │  features  │  features  │  features  │                       │
-│  └────────────┴────────────┴────────────┘                       │
-│                                                                 │
-│  Both SVMs (vegetable + freshness) are trained on this          │
-│  SAME union set. Task-specific ranks are used only for          │
-│  selection — the shared feature space preserves signal          │
-│  for both classifiers.                                          │
-└─────────────────────────────────────────────────────────────────┘
+Phase 1 — Proxy Sweep (LinearSVC):
+  union_k = top-k(fresh) ∪ top-k(veg) for each k
+  Proxy winner: k=250  (combined val acc=0.9807)
+
+Phase 2 — RBF SVM Confirmation (3-fold sweep, 5-fold refit on winner):
+  RBF winner: k=200  (combined=0.9925)
+  Note: proxy k=250 corrected to k=200 — larger sets add noise for RBF
+
+  5-fold refit:  veg C=10.0, γ=0.001  |  fresh C=10.0, γ='scale'
+```
+
+### Final Union Feature Set
+
+```
+  selected_fresh = top-200 by avg_imp_fresh
+  selected_veg   = top-200 by avg_imp_veg
+
+  ┌────────────────┬──────────────┬────────────────┐
+  │  Fresh-only    │   Shared     │   Veg-only     │
+  │  149 features  │  51 features │  149 features  │
+  └────────────────┴──────────────┴────────────────┘
+             ←──────── 349 features ────────→
+
+  Both SVMs trained on this same union set.
 ```
 
 **Artifacts saved:** `variance.joblib`, `scaler.joblib`, `selected_union_features.npy`, `feature_importances_fresh.npy`, `feature_importances_veg.npy`, `feature_selection_report.json`
@@ -263,122 +273,111 @@ k_candidates = {50, 100, 150, 200, 250}
 
 ## Model Training & Calibration
 
-**Script:** `train_svm.py`
+**Script:** `src/train_svm.py`
 
-### Val Set Split (Leakage Prevention)
-
-The validation set is split 50/50 into two disjoint halves **before** any calibration occurs. This prevents the isotonic calibration from seeing the same data used for threshold selection:
+### Val Set Disjoint Split (Calibration Leakage Prevention)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│               VAL SET DISJOINT SPLIT  (Issue-2 Fix)            │
+│               VAL SET DISJOINT SPLIT                            │
 │                                                                 │
-│  X_val  (stratified by y_fresh)                                 │
+│  X_val (1,269 samples, stratified by y_fresh)                   │
 │    │                                                            │
-│    ├── 50%  →  cal_val   →  CalibratedClassifierCV             │
-│    │                        (isotonic regression on veg_base)   │
+│    ├── 50% → cal_val (634)  → CalibratedClassifierCV            │
+│    │                           (isotonic on veg_base)           │
 │    │                                                            │
-│    └── 50%  →  thr_val   →  select_thresholds()               │
-│                              augmentation stability stats       │
-│                              formal gate calibration            │
+│    └── 50% → thr_val (635)  → select_thresholds()               │
+│                                augmentation stability stats     │
+│                                formal gate calibration          │
 │                                                                 │
-│  WITHOUT THIS SPLIT: isotonic calibration sees threshold data   │
-│  → calibrated probs overfit to thr_val → thresholds too loose  │
+│  WITHOUT THIS SPLIT: isotonic calibration sees the same data    │
+│  as threshold selection → thresholds overfit to calibration     │
+│  distribution → fail on genuinely new images                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Dual SVM Training
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                    DUAL SVM TRAINING                             │
-│                                                                  │
-│  Input: X_train[:, union_set]                                    │
-│                                                                  │
-│  ┌────────────────────────────────────────────┐                  │
-│  │         VEGETABLE CLASSIFIER               │                  │
-│  │                                            │                  │
-│  │  GridSearchCV (5-fold, StratifiedKFold)    │                  │
-│  │  Base: SVC(kernel="rbf", class_weight=     │                  │
-│  │            "balanced", probability=False)  │                  │
-│  │  Grid: C × γ (30 combinations)            │                  │
-│  │  → veg_base (best refitted estimator)      │                  │
-│  │                                            │                  │
-│  │  CalibratedClassifierCV(                   │                  │
-│  │    FrozenEstimator(veg_base),              │                  │
-│  │    method="isotonic"                       │                  │
-│  │  ).fit(X_cal_val, y_veg_cal)              │                  │
-│  │  → veg_svm.joblib                          │                  │
-│  │  Outputs: predict_proba() for gate logic   │                  │
-│  └────────────────────────────────────────────┘                  │
-│                                                                  │
-│  ┌────────────────────────────────────────────┐                  │
-│  │         FRESHNESS CLASSIFIER               │                  │
-│  │                                            │                  │
-│  │  GridSearchCV (5-fold, StratifiedKFold)    │                  │
-│  │  Same RBF SVC, same param grid             │                  │
-│  │  → fresh_svm.joblib                        │                  │
-│  │  Outputs: decision_function() (raw margin) │                  │
-│  │           predict() (Fresh/Rotten label)   │                  │
-│  └────────────────────────────────────────────┘                  │
-└──────────────────────────────────────────────────────────────────┘
+VEGETABLE CLASSIFIER
+  GridSearchCV: 5-fold StratifiedKFold, 150 fits total
+  Base: SVC(kernel="rbf", class_weight="balanced", probability=False)
+  Grid: C ∈ {1e-3, 1e-2, 0.1, 1, 10, 100}
+        γ ∈ {1e-4, 1e-3, 1e-2, 0.1, "scale"}
+  Best: C=10.0, γ=0.001   CV acc=0.9958
+  Calibrate: CalibratedClassifierCV(FrozenEstimator(veg_base), method="isotonic")
+             fit on cal_val only → veg_svm.joblib
+  Provides: predict_proba()
+
+FRESHNESS CLASSIFIER
+  Same GridSearchCV procedure, binary target (0=rotten, 1=fresh)
+  Best: C=10.0, γ="scale"   CV acc=0.9865
+  Saved: fresh_svm.joblib
+  Provides: decision_function() (raw margin)
+            predict() (Fresh / Rotten)
 ```
 
-### Normalization Bounds (Per-Vegetable)
+### Normalization Bounds (Per-Vegetable, Full Val Set)
 
-The raw SVM margin (a real number) is converted to a 0–100 score using per-vegetable p5/p95 percentile bounds computed on the **full val set**:
+The raw SVM margin is converted to a 0–100 score:
 
 ```
-score = clip( (raw - p5_veg) / (p95_veg - p5_veg) × 100, 0, 100 )
+score = clip( (raw − p5_veg) / (p95_veg − p5_veg) × 100, 0, 100 )
+
+Actual bounds from training run:
+  apple     p5=−2.5635  p95=+2.1198  spread=4.6833
+  banana    p5=−2.0173  p95=+1.8217  spread=3.8390
+  capsicum  p5=−1.2853  p95=+1.8389  spread=3.1241
+  cucumber  p5=−1.6697  p95=+1.6762  spread=3.3460
+  potato    p5=−1.8869  p95=+1.6565  spread=3.5434
+  global    p5=−2.2678  p95=+1.9306  (fallback)
 ```
 
-Why the full val set (not just cal_val or thr_val)? The 50/50 split can leave individual vegetable classes below the 50-sample minimum required for stable percentile estimates. Using the full val set for bounds is safe because p5/p95 is a fixed linear transform that cannot encode label information.
-
-Each vegetable must have ≥ 50 val samples for its own bounds; missing entries raise a hard `RuntimeError` — there is no silent fallback to global bounds at training time.
+Bounds use the **full val set** — not training data (which produces inflated margins due to SVM optimisation) and not a half-split (which may leave thin classes below 50 samples). A missing class raises a hard `RuntimeError` with no silent fallback.
 
 ### Mahalanobis OOD Detector
 
-A LedoitWolf-shrinkage covariance estimate is fit on training features to define the training distribution:
-
 ```
-  train_mean      = X_train.mean(axis=0)
-  precision       = LedoitWolf().fit(X_train).precision_
-  mahal_dist(x)   = sqrt( (x - mean)ᵀ · precision · (x - mean) )
+  train_mean    = X_train.mean(axis=0)              shape (349,)
+  precision     = LedoitWolf().fit(X_train).precision_  shape (349, 349)
+  mahal_dist(x) = sqrt( (x − mean)ᵀ · precision · (x − mean) )
 
-  thresh_caution  = P90 of mahal distances on X_train
-  thresh_ood      = P99 of mahal distances on X_train
+  thresh_caution = P90 of training distances = 24.167
+  thresh_ood     = P99 of training distances = 30.438
 
-  zone(x) = "trusted"   if dist < thresh_caution
-           = "caution"  if thresh_caution ≤ dist < thresh_ood
-           = "ood"      if dist ≥ thresh_ood
+  OOD rate: val=1.81%  test=2.44%  difference=0.63%  [OK < 5%]
 ```
 
-### Per-Class Centroid Consistency Check
-
-A centroid ratio gate catches vegetable misclassifications that the OOD detector misses (i.e., samples in-distribution overall but placed in the wrong cluster):
+### Per-Class Centroid Consistency Gate
 
 ```
-  centroids  = mean of X_train per vegetable class
-  d_pred     = L2 distance from x to predicted class centroid
-  d_second   = L2 distance from x to nearest other centroid
+  For each class: centroid = mean(X_train rows for that class)
 
-  ratio      = d_pred / d_second
-  threshold  = P95 of ratio on correctly classified val samples (per class)
+  At inference:
+    d_pred   = L2(x, predicted_centroid)
+    d_second = L2(x, nearest other centroid)
+    ratio    = d_pred / d_second
+    threshold = P95 of ratio on correctly classified val samples
+
+  Thresholds (from training run):
+    apple=1.0220  banana=0.9552  capsicum=0.9973
+    cucumber=1.0257  potato=0.9740
 
   class_inconsistent = (ratio > threshold)
+  Effect: forces global bounds → decision_unreliable=True → TENTATIVE
 ```
 
 ---
 
 ## Threshold Selection
 
-**Script:** `threshold_selection.py`
+**Script:** `src/threshold_selection.py`
 
-This module formally selects the two reliability gate thresholds on `thr_val` (the held-out half of val):
+`T_boundary` and `T_instability` are selected by constrained optimisation on `thr_val`:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              RELIABILITY FORMULA (fixed contract)               │
+│  RELIABILITY FORMULA (fixed contract)                           │
 │                                                                 │
 │  RELIABLE_i = (                                                 │
 │    NOT is_ood_i                                                 │
@@ -388,216 +387,191 @@ This module formally selects the two reliability gate thresholds on `thr_val` (t
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│              OPTIMISATION PROBLEM                               │
+│  OPTIMISATION                                                   │
 │                                                                 │
-│  Find (T_boundary*, T_instability*) that:                       │
+│  Maximise:   Coverage = P(RELIABLE)                             │
+│  Subject to: Risk = P(error | RELIABLE) ≤ ε = 0.10              │
+│              n_reliable ≥ n_min                                 │
 │                                                                 │
-│    Maximise:  Coverage = P(RELIABLE)                            │
-│    Subject to: Risk = P(error | RELIABLE) ≤ ε   (ε = 0.10)    │
-│                n_reliable ≥ n_min                               │
+│  Grid: T_boundary    ∈ [0.0, 3.0]  step 0.05  (61 values)       │
+│        T_instability ∈ [0.0, max_aug_range]  step 0.5           │
 │                                                                 │
-│  Grid search:                                                   │
-│    T_boundary    ∈ [0.0, 3.0]  step 0.05                       │
-│    T_instability ∈ [0.0, max_aug_range]  step 0.5              │
+│  Result: T_boundary=0.0000   T_instability=36.0000              │
+│          Risk=0.0188  Coverage=97.89%  n_reliable=372           │
+│          feasible=True                                          │
 │                                                                 │
-│  Tie-break: max coverage → min T_boundary                       │
+│  T_boundary=0.0 is the formal result — the base model is        │
+│  accurate enough that no margin cutoff is needed to keep        │
+│  Risk ≤ 10%. The boundary gate is effectively inactive.         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-If no feasible `(T_b, T_i)` pair satisfies the constraints, `diagnose_infeasibility()` runs a diagnostic sweep to classify the failure as:
+If no feasible pair exists, `diagnose_infeasibility()` classifies the failure:
 
 | Case | Description | Recommended Action |
 |------|-------------|-------------------|
-| **Case (a)** | Risk is flat across margin quantiles (< 2 pp total drop). Margin has no predictive power for errors. | Remove T_boundary gate; consider augmentation-range gate only |
-| **Case (b)** | Risk decreases with margin but never reaches ε. Base model error is the binding constraint. | Lower ε to an achievable target, or improve the freshness classifier |
+| **Case (a)** | Risk flat across margin quantiles. Margin has no predictive power for errors. | Remove T_boundary gate |
+| **Case (b)** | Risk decreases with margin but never reaches ε. Base model error is binding. | Lower ε or improve the freshness classifier |
 | **insufficient_data** | Fewer than 2 quantiles with n_reliable > 0 | Reduce n_min or collect more data |
 
 ---
 
 ## Inference & Reliability Gating
 
-**Script:** `predict_cli.py`
+**Script:** `src/predict_cli.py`
 
 Every prediction passes through a sequential gate pipeline. The first gate to fail determines the output state.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     INFERENCE PIPELINE (predict_cli.py)                     │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-    Input: image path
+Input: path/to/image.jpg
          │
          ▼
 ┌─────────────────────┐
 │  STAGE 1            │
-│  Preflight Checks   │  ── Laplacian variance  < 28.0  →  UNRELIABLE
-│  (image quality)    │  ── Mean brightness not in [30, 220]  →  UNRELIABLE
-│                     │  ── Object coverage < 0.40  →  warning (not rejected)
+│  Preflight Checks   │  Laplacian variance < 28.0         →  UNRELIABLE
+│                     │  Mean brightness ∉ [30, 220]       →  UNRELIABLE
+│                     │  Object coverage < 0.40            →  warning only
 └────────┬────────────┘
-         │  OK
+         │  pass
          ▼
 ┌─────────────────────┐
 │  STAGE 2            │
-│  Feature Extraction │  EfficientNetB0 + handcrafted → [1312]
-│  + Preprocessing    │  VarianceThreshold → StandardScaler → union_set slice
+│  Feature Extraction │  EfficientNetB0 → [1280]
+│  + Preprocessing    │  Handcrafted → [32]  |  Concat → [1312]
+│                     │  VarianceThreshold → StandardScaler → union[349]
 └────────┬────────────┘
          │
          ▼
 ┌─────────────────────┐
 │  STAGE 3            │
-│  Vegetable SVM      │  predict_proba() → top-1 label + confidence + gap
+│  Vegetable SVM      │  predict_proba() → top-1 label + veg_conf% + gap%
 │                     │  veg_confident = (conf ≥ 70%) AND (gap ≥ 15%)
 └────────┬────────────┘
          │
          ▼
 ┌─────────────────────┐
 │  STAGE 4            │
-│  Centroid           │  centroid_ratio = d_pred / d_second
-│  Consistency Check  │  class_inconsistent = ratio > per-class P95 threshold
+│  Centroid Check     │  ratio = d_pred / d_second
+│                     │  class_inconsistent = ratio > per-class P95 threshold
+│                     │  → forces global bounds if inconsistent
 └────────┬────────────┘
          │
          ▼
 ┌─────────────────────┐
 │  STAGE 5            │
 │  Freshness SVM      │  decision_function() → raw margin
-│                     │  normalize → 0-100 score (per-veg bounds if confident
-│                     │             and class-consistent, else global bounds)
+│                     │  normalize → score [0–100]
+│                     │  (per-veg bounds if confident & consistent,
+│                     │   else global bounds)
 └────────┬────────────┘
          │
          ▼
 ┌─────────────────────┐
 │  STAGE 6            │
-│  OOD Gate           │  Mahalanobis distance > thresh_ood  →  score_unreliable=True
-│  (Mahalanobis)      │  zone: trusted / caution / ood
+│  OOD Gate           │  dist ≥ 30.438  →  score_unreliable=True  →  UNRELIABLE
+│  (Mahalanobis)      │  zone: trusted / caution [24.167–30.438] / ood
 └────────┬────────────┘
          │
          ▼
-┌─────────────────────┐   use_augmentation_gate=True only
+┌─────────────────────┐
 │  STAGE 7 (optional) │
-│  Augmentation       │  6 augmented views: ±15% brightness, flip,
-│  Instability Gate   │  blur, ±5° rotation
-│                     │  score_range = max(scores) - min(scores)
+│  Augmentation Gate  │  6 augmented views: ±15% brightness, flip,
+│  (disabled by       │  Gaussian blur, ±5° rotation
+│   default)          │  score_range = max(scores) − min(scores)
 │                     │  crosses_boundary = min(raw) < 0 AND max(raw) > 0
-│                     │  unstable = (score_range ≥ T_instability) AND crosses_boundary
+│                     │  unstable = (score_range ≥ 36.0) AND crosses_boundary
+│                     │  → score_unreliable=True if unstable
 └────────┬────────────┘
          │
          ▼
 ┌─────────────────────┐
 │  STAGE 8            │
 │  Boundary Gate      │  near_boundary = abs(raw) < T_boundary
-│                     │  decision_unreliable |= near_boundary
+│                     │  (currently inactive — T_boundary=0.0)
 └────────┬────────────┘
          │
          ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                    RELIABILITY DECISION                          │
+│  RELIABILITY DECISION                                            │
 │                                                                  │
-│  score_unreliable    = unstable OR is_ood                        │
-│  decision_unreliable = near_boundary OR low_veg_conf OR          │
+│  score_unreliable    = is_ood OR unstable                        │
+│  decision_unreliable = near_boundary OR NOT veg_confident OR     │
 │                        class_inconsistent OR conf_gap < 10%      │
 │                                                                  │
-│  HIGH-CONFIDENCE OVERRIDE: if veg_conf > 95% AND not near        │
-│  boundary AND not crosses_boundary AND not OOD AND not           │
-│  class_inconsistent → force RELIABLE regardless of above         │
+│  High-confidence override: veg_conf > 95% AND not near_boundary  │
+│  AND not crosses_boundary AND not is_ood AND not inconsistent    │
+│  → force RELIABLE regardless of decision_unreliable              │
 │                                                                  │
-│  score_unreliable  = True  →  UNRELIABLE  (no score, no label)  │
-│  decision_unreliable = True →  TENTATIVE  (score shown,         │
-│                                 no fresh_label)                  │
-│  neither           = True  →  RELIABLE   (score + label +       │
-│                                 confidence band)                 │
+│  score_unreliable=True   →  UNRELIABLE  (no score, no label)     │
+│  decision_unreliable=True →  TENTATIVE  (score, no fresh_label)  │
+│  neither                 →  RELIABLE   (score + label + band)    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Output States
 
-| State | Score | Fresh Label | Freshness Band | When |
-|-------|-------|-------------|----------------|------|
-| `RELIABLE` | ✅ | ✅ | ✅ | All gates passed; prediction trustworthy |
-| `TENTATIVE` | ✅ | ❌ | ❌ | Score valid but decision uncertain (near boundary, ambiguous veg, centroid mismatch) |
-| `UNRELIABLE` | ❌ | ❌ | ❌ | Image quality failed, OOD detected, or severe augmentation instability |
+| State | Score | Fresh Label | Confidence Band | When |
+|-------|-------|-------------|-----------------|------|
+| `RELIABLE` | ✅ | ✅ | ✅ | All gates passed |
+| `TENTATIVE` | ✅ | ❌ | ❌ | Near boundary, low veg confidence, or centroid mismatch |
+| `UNRELIABLE` | ❌ | ❌ | ❌ | Image quality failed, OOD detected, or severe aug instability |
 
 ### Freshness Confidence Bands
 
-The 0–100 normalized score is mapped to a qualitative band for `RELIABLE` outputs:
-
-| Band | Score Range | Interpretation |
-|------|-------------|----------------|
+| Band | Score | Interpretation |
+|------|-------|----------------|
 | **High** | ≥ 85 | Strongly in the fresh region of feature space |
 | **Medium** | 65–84 | Moderately fresh signal |
 | **Low** | 40–64 | Weakly fresh; marginal |
 | **Very Low** | < 40 | Strongly rotten signal |
 
-> **Important:** The score is a calibrated proxy derived from the SVM decision margin. It reflects **model certainty** in the fresh/rotten classification relative to the training distribution — not an absolute freshness measurement. The `fresh_label` field (`Fresh` / `Rotten`) is the primary actionable decision.
+> **Important:** The score is a per-vegetable calibrated proxy derived from the SVM decision margin. It reflects model certainty relative to the training distribution — not an absolute freshness measurement. A score of 80 for banana and 80 for potato both mean "high relative to that vegetable's training distribution" — they are not on a shared scale. The `fresh_label` field (`Fresh` / `Rotten`) is the primary actionable output.
 
 ---
 
 ## Evaluation
 
-**Script:** `evaluate_models.py`
+**Script:** `src/evaluate_models.py`
 
-The test set is loaded **for the first time** here. The evaluation produces a comprehensive report covering:
+The test set is loaded **for the first time** here. No calibration step has seen this data.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │                  EVALUATION REPORT SECTIONS                    │
 │                                                                │
 │  1. Classification Metrics                                     │
-│     • Vegetable accuracy + per-class precision/recall/F1       │
-│     • Freshness accuracy + confusion matrix                    │
-│     • Freshness ROC-AUC (SVM margin as ranking signal)         │
+│     Vegetable accuracy + per-class precision/recall/F1         │
+│     Freshness accuracy + confusion matrix                      │
+│     Freshness ROC-AUC (SVM margin as ranking signal)           │
 │                                                                │
 │  2. Inversion Rate Diagnostics                                 │
-│     • Raw margin inversion   (model signal quality)            │
-│     • Global-norm inversion  (normalization layer)             │
-│     • Deployed-norm inversion (mirrors CLI gate exactly)       │
-│     • Per-vegetable gate delta (catches localized failures)    │
-│       → STABLE if global delta < 0.01 AND max per-veg < 0.02  │
+│     Raw margin / global-norm / deployed-norm inversion         │
+│     Per-vegetable gate delta                                   │
+│     STABLE if: global delta < 0.01 AND max per-veg < 0.02      │
 │                                                                │
 │  3. Gate Ablation Study                                        │
-│     For each gate: G1 OOD, G2 near-boundary, G3 low-veg-conf  │
-│     Reports: fires%, catches_wrong, blocks_correct             │
+│     G1 OOD, G2 near-boundary, G3 low-veg-confidence            │
 │     Δ_acc = accuracy change when gate disabled                 │
 │     Δ_cov = coverage change when gate disabled                 │
 │     Verdict: KEEP / REMOVE / REVIEW / NEVER FIRES              │
 │                                                                │
-│  4. State Distribution (RELIABLE / TENTATIVE / UNRELIABLE)     │
-│     • Global distribution on test set                          │
-│     • Per-vegetable breakdown (catches per-class collapse)     │
+│  4. State Distribution                                         │
+│     Global + per-vegetable RELIABLE/TENTATIVE/UNRELIABLE       │
 │                                                                │
-│  5. RELIABLE-subset Accuracy                                   │
-│     • Overall freshness accuracy                               │
-│     • RELIABLE-only freshness accuracy                         │
-│     • Expected: RELIABLE acc ≥ overall acc                     │
-│     • Per-vegetable RELIABLE accuracy vs baseline              │
+│  5. RELIABLE-Subset Accuracy                                   │
+│     RELIABLE acc must be ≥ overall acc (gate sanity check)     │
+│     Per-vegetable RELIABLE accuracy vs 98.98% baseline         │
 │                                                                │
-│  6. OOD Rate Consistency  (val vs test — should be < 5% diff)  │
+│  6. OOD Rate Consistency  (val vs test — must be < 5% diff)    │
 │                                                                │
-│  7. Score Distribution Summary                                 │
-│     • Fresh mean/std/range vs rotten                           │
-│     • Delta (fresh mean − rotten mean)                         │
-│     • Overlap fraction (rotten > fresh mean)                   │
+│  7. Score Distribution                                         │
+│     Fresh mean=86.84  Rotten mean=16.10  Delta=70.73 pts       │
+│     Overlap (rotten > fresh mean) = 0.0000                     │
 │                                                                │
 │  8. Silent Failure Analysis                                    │
-│     • Veg wrong but RELIABLE (blind-spot count)                │
-│     • Catastrophic = veg wrong AND fresh wrong                 │
-│     • Centroid vs OOD coverage of veg misclassifications       │
+│     Veg wrong but RELIABLE → 3 (all "accidental correct")      │
+│     Catastrophic (veg+fresh both wrong) → 0                    │
 └────────────────────────────────────────────────────────────────┘
-```
-
-### Inversion Rate Explained
-
-The inversion rate measures ordering reliability: what fraction of (fresh, rotten) pairs have `score_fresh < score_rotten`? A perfect system has inversion rate = 0.
-
-```
-  Pair sampling: 10,000 random (i_fresh, j_rotten) pairs
-  Inversion = (score_fresh_i < score_rotten_j).mean()
-
-  Three layers:
-    Raw margin   → tests the model signal before normalization
-    Global norm  → tests the linear rescaling step
-    Deployed     → tests the full CLI path (per-veg bounds, gate logic)
-
-  Layer deltas tell you exactly where ordering degrades.
 ```
 
 ---
@@ -605,137 +579,168 @@ The inversion rate measures ordering reliability: what fraction of (fresh, rotte
 ## Directory Structure
 
 ```
-.
-├── extract_features.py          # EfficientNetB0 + handcrafted feature engine (1312-d)
-├── extract_dataset_features.py  # Batch extraction over full dataset → Features/
-├── train_split.py               # Stratified 70/10/20 split → models/
-├── preprocess_and_rank.py       # Variance filter, scaler, XGBoost ranking, union set
-├── train_svm.py                 # Dual RBF SVM training, calibration, gate fitting
-├── threshold_selection.py       # Formal T_boundary / T_instability selection
-├── predict_cli.py               # Full inference with 8-stage reliability gating
-├── evaluate_models.py           # Held-out test set evaluation + ablation
-├── visualize_results.py         # Confusion matrices + feature importance plots
-├── utils.py                     # I/O helpers, confidence_band(), TARGET_VEGETABLES
+mini-project/
 │
-├── Features/                    # Raw extracted features (generated)
-│   ├── X.npy                    # Feature matrix [N × 1312]
-│   ├── y_veg.npy                # Vegetable labels
-│   ├── y_fresh.npy              # Freshness labels (0=rotten, 1=fresh)
-│   └── image_paths.npy          # Aligned image paths
+├── src/
+│   ├── extract_features.py          # EfficientNetB0 + handcrafted feature engine (1312-d)
+│   ├── extract_dataset_features.py  # Batch extraction over full dataset → Features/
+│   ├── train_split.py               # Stratified 70/10/20 split → models/
+│   ├── preprocess_and_rank.py       # VarianceThreshold, scaler, XGBoost, union set
+│   ├── train_svm.py                 # Dual RBF SVM, calibration, gate fitting
+│   ├── threshold_selection.py       # Formal T_boundary / T_instability selection
+│   ├── predict_cli.py               # Full inference with 8-stage reliability gating
+│   ├── evaluate_models.py           # Held-out test set evaluation + gate ablation
+│   ├── visualize_results.py         # Confusion matrices + feature importance plots
+│   └── utils.py                     # I/O helpers, confidence_band(), TARGET_VEGETABLES
 │
-├── models/                      # All trained artifacts (generated)
-│   ├── X_train.npy              # Preprocessed train split
-│   ├── X_val.npy                # Preprocessed val split
-│   ├── X_test.npy               # Preprocessed test split (locked)
-│   ├── variance.joblib          # VarianceThreshold (fit on train)
-│   ├── scaler.joblib            # StandardScaler (fit on train)
-│   ├── selected_union_features.npy  # Final feature indices
+├── Features/                        # Generated by extract_dataset_features.py
+│   ├── X.npy                        # [12691 × 1312] float32
+│   ├── y_veg.npy                    # Vegetable label strings
+│   ├── y_fresh.npy                  # Freshness labels (0=rotten, 1=fresh)
+│   └── image_paths.npy              # Row-aligned image paths (required by train_svm.py)
+│
+├── models/                          # Generated by training scripts
+│   ├── X_train.npy                  # [8883 × 1312]
+│   ├── X_val.npy                    # [1269 × 1312]
+│   ├── X_test.npy                   # [2539 × 1312]  LOCKED until evaluate_models.py
+│   ├── y_veg_train/val/test.npy
+│   ├── y_fresh_train/val/test.npy
+│   ├── val_image_paths.npy          # Required for aug stats in train_svm.py
+│   ├── variance.joblib              # VarianceThreshold (fit on train only)
+│   ├── scaler.joblib                # StandardScaler (fit on train only)
+│   ├── selected_union_features.npy  # [349] column indices used by both SVMs
+│   ├── selected_fresh_features.npy  # [200] freshness-task top-200
+│   ├── selected_veg_features.npy    # [200] vegetable-task top-200
 │   ├── feature_importances_fresh.npy
 │   ├── feature_importances_veg.npy
 │   ├── feature_selection_report.json
-│   ├── veg_svm_base.joblib      # Raw tuned SVC (before calibration)
-│   ├── veg_svm.joblib           # CalibratedClassifierCV (final)
-│   ├── fresh_svm.joblib         # Freshness SVC
-│   ├── label_encoder.joblib     # LabelEncoder for vegetable classes
-│   ├── train_mean.npy           # Mahalanobis centroid
-│   ├── train_precision.npy      # LedoitWolf precision matrix
-│   ├── class_centroids.npy      # Per-class L2 centroids
-│   ├── val_image_paths.npy      # Val image paths (for augmentation stats)
-│   └── scoring_config.json      # All gate thresholds + calibration metadata
+│   ├── veg_svm_base.joblib          # Raw GridSearchCV SVC (pre-calibration)
+│   ├── veg_svm.joblib               # CalibratedClassifierCV (final)
+│   ├── fresh_svm.joblib             # Freshness SVC
+│   ├── label_encoder.joblib         # Vegetable name ↔ integer
+│   ├── train_mean.npy               # Mahalanobis centroid [349]
+│   ├── train_precision.npy          # LedoitWolf precision [349 × 349]
+│   ├── class_centroids.npy          # Per-class centroids [5 × 349]
+│   └── scoring_config.json          # All thresholds + calibration metadata
 │
-└── vegetable_Dataset/           # Source images
+└── vegetable_Dataset/               # Source images (not committed)
     ├── freshapple/
     ├── rottenapple/
     ├── freshbanana/
     ├── rottenbanana/
-    └── ...                      # (one folder per vegetable × freshness)
+    └── ...                          # one folder per vegetable × freshness
 ```
 
 ---
 
 ## Pipeline Execution
 
-Run the following scripts in order. Each script depends on outputs from the previous one.
+Run all commands from the **project root** (`~/Desktop/mini-project`).
 
 ### Step 1 — Extract Features
 
 ```bash
-python extract_dataset_features.py
+python src/extract_dataset_features.py
 ```
 
-Scans `vegetable_Dataset/`, extracts 1312-d feature vectors for all images, saves to `Features/`.
+Scans `vegetable_Dataset/`, extracts 1312-d feature vectors for all images, saves to `Features/`. Takes approximately 5 minutes on CPU (Intel i7 12th-gen). TensorFlow startup warnings (oneDNN, CUDA) are informational — the CUDA error is expected on CPU-only machines.
+
+```
+Total images: 12691
+Batches: 100%|████████████████████| 100/100 [04:49<00:00,  2.90s/it]
+Saved feature matrix: (12691, 1312)
+```
 
 ### Step 2 — Split Dataset
 
 ```bash
-python train_split.py
+python src/train_split.py
 ```
 
-Creates stratified 70/10/20 train/val/test splits. Saves feature matrices and labels to `models/`.
+Creates stratified 70/10/20 splits, saves all feature matrices and labels to `models/`, including `val_image_paths.npy` which is required by Step 4.
+
+```
+[SUCCESS] Split created — Train=8883  Val=1269  Test=2539
+[INFO] Test set must remain untouched until evaluate_models.py
+```
 
 ### Step 3 — Select Features
 
 ```bash
-python preprocess_and_rank.py
+python src/preprocess_and_rank.py
 ```
 
-Fits VarianceThreshold + StandardScaler on training data, ranks features per task via XGBoost (5 seeds), runs two-phase k-selection sweep, saves union feature set and preprocessing artifacts.
+Fits preprocessing on training data only, runs dual XGBoost ranking (10 fits total), runs two-phase k-selection sweep (proxy + RBF confirmation), saves 349-feature union set.
+
+```
+[INFO] VarianceThreshold: 1312 → 1304
+  [NOTE] RBF confirmation changed best_k: 250 → 200  (combined=0.9925)
+  Union size: 349  (Fresh-only: 149, Shared: 51, Veg-only: 149)
+```
 
 ### Step 4 — Train & Calibrate
 
 ```bash
-python train_svm.py
+python src/train_svm.py
 ```
 
-Tunes and fits both SVMs via GridSearchCV, calibrates vegetable probabilities (isotonic), fits Mahalanobis OOD detector, computes per-vegetable normalization bounds, runs formal threshold selection, saves `scoring_config.json`.
+Tunes both SVMs via GridSearchCV (150 fits each), calibrates vegetable probabilities with isotonic regression on `cal_val`, computes per-vegetable normalization bounds on full val set, fits Mahalanobis OOD detector, runs augmentation statistics on `thr_val`, runs formal threshold selection, saves `scoring_config.json`. **Test set is never loaded in this step.**
+
+```
+[INFO] val split: cal_val=634  thr_val=635
+[INFO] Formal thresholds — T_boundary=0.0000  T_instability=36.0000
+       Risk=0.0188  Coverage=0.9789  n_reliable=372
+```
 
 ### Step 5 — Evaluate
 
 ```bash
-python evaluate_models.py
+python src/evaluate_models.py
 ```
 
-Loads the held-out test set for the first time. Produces the full evaluation report: classification metrics, inversion diagnostics, gate ablation, state distribution, silent failure analysis.
+Opens the test set for the first time. Produces the full evaluation report.
 
 ### Step 6 — Predict
 
 ```bash
-python predict_cli.py --image path/to/vegetable.jpg
-```
+# Full pipeline with reliability gating
+python src/predict_cli.py --image path/to/vegetable.jpg
 
-Runs the full 8-stage inference pipeline on a single image.
-
-```bash
-# Skip augmentation stability check (faster, no 6× EfficientNet passes)
-python predict_cli.py --image path/to/vegetable.jpg --no-uncertainty
+# Fast mode — skips augmentation gate (saves ~6× EfficientNet passes)
+python src/predict_cli.py --image path/to/vegetable.jpg --no-uncertainty
 ```
 
 ### Step 7 — Visualize (optional)
 
 ```bash
-python visualize_results.py
+python src/visualize_results.py
 ```
 
-Renders confusion matrices for both tasks and top-20 XGBoost feature importance plots.
+Renders four matplotlib figures using the test set: vegetable confusion matrix (Blues), freshness confusion matrix (Greens), top-20 XGBoost feature importances for the freshness task, top-20 for the vegetable task.
+
+### Partial Re-run Checklist
+
+| What changed | Commands needed |
+|---|---|
+| SVM hyperparameters only | `train_svm.py` → `evaluate_models.py` |
+| Feature selection (k, seeds, XGBoost settings) | `preprocess_and_rank.py` → `train_svm.py` → `evaluate_models.py` |
+| New images added to dataset | All 5 steps in order |
+| Gate thresholds in `scoring_config.json` only | Edit config → `evaluate_models.py` |
 
 ---
 
 ## Output Reference
 
-### `predict_cli.py` Return Value
+### `predict_cli.py` — Return Value Structure
 
-```python
-result = predict("image.jpg")
-```
-
-**RELIABLE output:**
+**RELIABLE:**
 ```json
 {
   "state": "RELIABLE",
   "veg": "banana",
   "veg_conf": 98.4,
   "score": 77.2,
-  "score_range": 3.1,
+  "score_range": 0.0,
   "raw": 1.843,
   "fresh_label": "Fresh",
   "freshness_confidence_band": "Medium",
@@ -746,7 +751,7 @@ result = predict("image.jpg")
 }
 ```
 
-**TENTATIVE output** (score present; no fresh_label):
+**TENTATIVE** (score present; no fresh_label):
 ```json
 {
   "state": "TENTATIVE",
@@ -761,12 +766,12 @@ result = predict("image.jpg")
   "mahal_zone": "caution",
   "warnings": [
     "Low veg confidence (61.3%, gap=8.2%) — using global normalization.",
-    "CAUTION — Mahalanobis dist=18.7 in caution zone."
+    "CAUTION — Mahalanobis dist=18.7 in caution zone [24.167, 30.438]."
   ]
 }
 ```
 
-**UNRELIABLE output** (image quality failure):
+**UNRELIABLE** (image quality failure):
 ```json
 {
   "state": "UNRELIABLE",
@@ -778,23 +783,23 @@ result = predict("image.jpg")
 }
 ```
 
-### `scoring_config.json` Key Fields
+### `scoring_config.json` — Key Fields
 
-| Key | Description |
-|-----|-------------|
-| `boundary_threshold` | T_boundary — abs(raw) must exceed this for RELIABLE |
-| `unstable_range_thresh` | T_instability — augmentation score range threshold |
-| `mahal_thresh_ood` | P99 Mahalanobis distance on training set |
-| `mahal_thresh_caution` | P90 Mahalanobis distance on training set |
-| `per_veg_bounds` | Per-vegetable p5/p95 normalization bounds |
-| `global_bounds` | Fallback normalization bounds (full val set) |
-| `veg_confidence_threshold` | 0.70 — minimum top-1 probability for veg gate |
-| `veg_gap_threshold` | 0.15 — minimum top-1 minus top-2 probability gap |
-| `centroid_ratio_thresholds` | Per-class P95 centroid ratio for consistency gate |
-| `threshold_selection_result` | Formal selection outcome: feasible, risk, coverage |
-| `infeasibility_diagnosis` | Case classification + risk/coverage curve (if infeasible) |
-| `svm_best_params` | Best GridSearchCV params for each SVM |
-| `calibration_note` | Human-readable provenance string for all design decisions |
+| Key | Value | Description |
+|-----|-------|-------------|
+| `boundary_threshold` | 0.0 | abs(raw) must exceed this for RELIABLE |
+| `unstable_range_thresh` | 36.0 | T_instability (aug gate; currently disabled) |
+| `use_augmentation_gate` | false | Aug gate inactive at inference by default |
+| `mahal_thresh_caution` | 24.167 | P90 of training Mahalanobis distances |
+| `mahal_thresh_ood` | 30.438 | P99 of training Mahalanobis distances |
+| `veg_confidence_threshold` | 0.70 | Min top-1 probability for per-veg bounds |
+| `veg_gap_threshold` | 0.15 | Min top-1 minus top-2 probability gap |
+| `per_veg_bounds` | per-class dict | p5/p95 normalization per vegetable |
+| `global_bounds` | fallback dict | Used when veg confidence is low |
+| `centroid_ratio_thresholds` | per-class dict | Centroid consistency gate thresholds |
+| `threshold_selection_result` | dict | Formal outcome: feasible, risk, coverage |
+| `svm_best_params` | dict | Best GridSearchCV params for each SVM |
+| `calibration_note` | string | Provenance record for all design decisions |
 
 ---
 
@@ -802,24 +807,24 @@ result = predict("image.jpg")
 
 ### Design Principles
 
-**Dual task separation.** XGBoost rankings are computed independently for freshness and vegetable tasks. Using a single freshness-derived feature set for the vegetable classifier would be scientifically invalid — vegetable-discriminative features may not be freshness-discriminative and vice versa.
+**Dual task separation.** XGBoost rankings are computed independently for freshness and vegetable tasks. A freshness-only ranking denies the vegetable classifier the features it needs; a combined label mixes the two signals. Independent rankings with a union is the correct design.
 
-**No calibration leakage.** The val set is split into disjoint halves before any calibration step. Isotonic regression sees `cal_val`; threshold selection sees `thr_val`. If both used the same data, thresholds would overfit to the calibration distribution.
+**No calibration leakage.** The val set is split into disjoint `cal_val` and `thr_val` halves before any calibration step. Isotonic regression sees only `cal_val`; threshold selection sees only `thr_val`. Sharing data between these steps causes thresholds to overfit to the calibration distribution.
 
-**Hard errors over silent fallbacks.** Missing per-vegetable bounds raise a `RuntimeError` at training time rather than silently falling back to global bounds. A silent fallback would mask thin-class failures and produce miscalibrated scores for underrepresented vegetables.
+**Hard errors over silent fallbacks.** Missing per-vegetable normalization bounds raise a `RuntimeError` at training time rather than silently falling back to global bounds. A silent fallback would mask thin-class failures and produce miscalibrated scores with no visible warning.
 
-**Evaluation mirrors deployment.** `evaluate_models.py` uses the same gating logic as `predict_cli.py`, including using *predicted* (not ground-truth) vegetable labels to select normalization bounds. Using ground truth here would silently inflate evaluation scores.
+**Evaluation mirrors deployment exactly.** `evaluate_models.py` uses *predicted* (not ground-truth) vegetable labels to select normalization bounds when computing deployed scores. Using ground truth would silently inflate evaluation scores by ensuring the correct bounds are always chosen.
 
-**Formal threshold selection over heuristics.** T_boundary and T_instability are found by constrained optimisation (Risk ≤ ε, coverage maximised) on held-out data — not by arbitrary percentile rules or manual tuning.
+**Formal threshold selection over heuristics.** T_boundary and T_instability are found by constrained optimisation (maximise Coverage subject to Risk ≤ ε) on held-out `thr_val` data — not by manual tuning or arbitrary percentile rules.
 
 ### Known Limitations
 
-- **Score is not absolute freshness.** The 0–100 score is a per-vegetable calibrated SVM margin proxy. A score of 80 for banana and 80 for potato both mean "high relative to that vegetable's training distribution" — they are not on a common scale. If cross-vegetable comparability is required, use `global_bounds` throughout.
+- **Scores are not cross-vegetable comparable.** A banana score of 80 and a potato score of 80 both mean "high relative to that vegetable's training distribution" — not the same absolute freshness level. Cross-vegetable comparison requires using `global_bounds` throughout.
 
-- **Augmentation gate requires 6× inference.** The instability gate runs EfficientNetB0 six times per image. When `use_augmentation_gate=False` (the current default), `T_instability` from formal threshold selection is still stored in `scoring_config.json` but the gate is not applied at runtime.
+- **Intra-class ordering is unvalidated.** The system proves class-level separation (fresh vs rotten) and ordering reliability between classes. Intra-class ordering (e.g., "this banana is 3 days older than that one") is not validated without continuous decay-day annotations.
 
-- **OOD detection in high-dimensional space.** The Mahalanobis detector uses a LedoitWolf-shrunk precision matrix. In very high-dimensional feature spaces, the detector may become over-aggressive. The OOD rate on val vs test should be monitored (a > 5% discrepancy is flagged by `evaluate_models.py`).
+- **Augmentation gate requires 6× inference cost.** The instability gate runs EfficientNetB0 six times per image. Currently disabled (`use_augmentation_gate=False`). T_instability=36.0 is formally calibrated and stored. Reactivate by setting `use_augmentation_gate: true` in `scoring_config.json`.
 
-- **No intra-class freshness ground truth.** The system proves class-level separation (fresh vs rotten) and ordering reliability between classes. Intra-class ordering (e.g., "this banana is 3 days older than that one") is not validated because no continuous decay-day annotations exist in the training data.
+- **Imaging condition sensitivity.** All calibration assumes consistent imaging conditions similar to training. Significant departures in lighting, background, or camera quality will increase OOD flags. The OOD rate discrepancy between val and test is monitored; a > 5% difference flags a warning in `evaluate_models.py`.
 
-- **Imaging condition sensitivity.** All calibration assumes consistent imaging conditions similar to the training set (lighting, distance, background). Significant departures will increase OOD flags and should be handled by retraining or domain adaptation.
+- **Score is not a physical freshness measurement.** A vegetable with internal decay that looks visually fresh will receive a high score. The system classifies visual appearance — the `fresh_label` field is the primary actionable output; the numeric score quantifies model confidence, not biological freshness state.
