@@ -1,5 +1,3 @@
-# File: preprocess_and_rank.py  (OPTIMIZED)
-#
 # Speed improvements vs previous version
 # ---------------------------------------
 # OPT-1: XGBoost rankings are computed ONCE per task at max(k_candidates),
@@ -36,7 +34,7 @@ from sklearn.metrics import accuracy_score
 from sklearn.model_selection import StratifiedKFold, GridSearchCV, cross_val_score
 import xgboost as xgb
 
-from utils import save_model, ensure_dirs
+from utils import save_model, ensure_dirs, SVM_PARAM_GRID
 
 FEATURE_DIR    = "Features"
 MODEL_DIR      = "models"
@@ -149,13 +147,6 @@ def check_ranking_stability(all_imps, top_k, task_label=""):
 # RBF SVM grid search helper
 # ─────────────────────────────────────────────────────────────
 
-# Log-scale grid — identical to train_svm.py (issue-4 fix)
-_SVM_PARAM_GRID = {
-    "C"    : [1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0],
-    "gamma": [1e-4, 1e-3, 1e-2, 1e-1, "scale"],
-}
-
-
 def _fit_rbf_svm_gs(X_train, y_train, task_label, n_cv=3, random_state=42):
     """
     GridSearchCV on RBF SVM.
@@ -169,7 +160,7 @@ def _fit_rbf_svm_gs(X_train, y_train, task_label, n_cv=3, random_state=42):
     )
     cv = StratifiedKFold(n_splits=n_cv, shuffle=True, random_state=random_state)
     gs = GridSearchCV(
-        base, _SVM_PARAM_GRID,
+        base, SVM_PARAM_GRID,
         cv=cv,
         scoring="accuracy",
         n_jobs=-1,

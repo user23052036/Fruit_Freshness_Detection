@@ -1,5 +1,11 @@
 import os
 import joblib
+import numpy as np
+
+SVM_PARAM_GRID = {
+    "C"    : [1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0],
+    "gamma": [1e-4, 1e-3, 1e-2, 1e-1, "scale"],
+}
 
 TARGET_VEGETABLES = {
     "apple",
@@ -43,3 +49,10 @@ def confidence_band(score: float, config=None) -> str:
     if score >= thr.get("moderate", 40):
         return "Low"
     return "Very Low"
+
+def normalize_score(raw, bounds):
+    p5, p95 = bounds["p5"], bounds["p95"]
+    denom   = p95 - p5
+    if abs(denom) < 1e-6:
+        return 50.0
+    return float(np.clip((raw - p5) / denom * 100.0, 0.0, 100.0))

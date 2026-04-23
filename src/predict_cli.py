@@ -8,7 +8,7 @@ from extract_features import (
     extract_features, extract_handcrafted,
     model as deep_model, preprocess_input,
 )
-from utils import load_model, confidence_band
+from utils import load_model, confidence_band, normalize_score
 
 MODEL_DIR = "models"
 
@@ -90,18 +90,6 @@ def preprocess_features(feats, vt, scaler, selected):
     X      = vt.transform(np.array([feats]))
     Xs     = scaler.transform(X)
     return Xs[:, selected]
-
-
-# ─────────────────────────────────────────────────────────────
-# Score normalization
-# ─────────────────────────────────────────────────────────────
-
-def normalize_score(raw, bounds):
-    p5, p95 = bounds["p5"], bounds["p95"]
-    denom   = p95 - p5
-    if abs(denom) < 1e-6:
-        return 50.0
-    return float(np.clip((raw - p5) / denom * 100.0, 0.0, 100.0))
 
 
 # ─────────────────────────────────────────────────────────────

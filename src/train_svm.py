@@ -1,5 +1,3 @@
-# File: train_svm.py
-#
 # Fixes vs previous version
 # --------------------------
 # Issue 2: same val set used for isotonic calibration AND threshold selection
@@ -41,7 +39,7 @@ from sklearn.model_selection import KFold, StratifiedKFold, GridSearchCV, train_
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.frozen import FrozenEstimator
 
-from utils import save_model, load_model, ensure_dirs
+from utils import save_model, load_model, ensure_dirs, SVM_PARAM_GRID
 from threshold_selection import (
     select_thresholds,
     diagnose_infeasibility,
@@ -49,16 +47,8 @@ from threshold_selection import (
 )
 
 MODEL_DIR   = "models"
-FEATURE_DIR = "Features"
 
 ensure_dirs(MODEL_DIR)
-
-# Log-scale grid — identical to preprocess_and_rank.py so both files agree
-_SVM_PARAM_GRID = {
-    "C"    : [1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0],
-    "gamma": [1e-4, 1e-3, 1e-2, 1e-1, "scale"],
-}
-
 
 # ─────────────────────────────────────────────────────────────
 # Data loading
@@ -94,7 +84,7 @@ def tune_svm(X_train, y_train, task_label, n_cv_splits=5, random_state=42):
     cv = StratifiedKFold(n_splits=n_cv_splits, shuffle=True,
                          random_state=random_state)
     gs = GridSearchCV(
-        base, _SVM_PARAM_GRID,
+        base, SVM_PARAM_GRID,
         cv=cv,
         scoring="accuracy",
         n_jobs=-1,
@@ -307,12 +297,11 @@ def compute_val_aug_stats(vt, scaler, selected, fresh_model,
 # ─────────────────────────────────────────────────────────────
 # Mahalanobis calibration
 # ─────────────────────────────────────────────────────────────
+def mahal(X, m, P):
+    diff = X - m
+    return np.sqrt(np.einsum("ij,jk,ik->i", diff, P, diff)) 
 
 def calibrate_mahalanobis_thresholds(X_train, X_val, mean, precision):
-    def mahal(X, m, P):
-        diff = X - m
-        return np.sqrt(np.einsum("ij,jk,ik->i", diff, P, diff))
-
     train_dists = mahal(X_train, mean, precision)
     val_dists   = mahal(X_val,   mean, precision)
 
@@ -566,12 +555,8 @@ def main():
         X_train, X_val, train_mean, precision
     )
 
-    def _mahal_dists(X, m, P):
-        diff = X - m
-        return np.sqrt(np.einsum("ij,jk,ik->i", diff, P, diff))
-
     # OOD flags on thr_val only (used for threshold selection)
-    thr_dists  = _mahal_dists(X_thr_val, train_mean, precision)
+    thr_dists  = mahal(X_thr_val, train_mean, precision)
     is_ood_thr = (thr_dists > thresh_ood)
 
     veg_conf_thresh = 0.70

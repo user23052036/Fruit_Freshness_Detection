@@ -48,6 +48,7 @@ dataset/
 duplicates/
 vegetable_Dataset/
 kaggle_dataset/
+test_img/
 
 # =========================
 # Git metadata safety

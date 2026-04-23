@@ -4,7 +4,7 @@ import numpy as np
 from sklearn.metrics import (
     accuracy_score, classification_report, confusion_matrix
 )
-from utils import load_model
+from utils import load_model,normalize_score
 
 MODEL_DIR = "models"
 
@@ -12,13 +12,6 @@ MODEL_DIR = "models"
 # ─────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────
-
-def normalize_score(raw, bounds):
-    p5, p95 = bounds["p5"], bounds["p95"]
-    denom   = p95 - p5
-    if abs(denom) < 1e-6:
-        return 50.0
-    return float(np.clip((raw - p5) / denom * 100.0, 0.0, 100.0))
 
 
 def get_normalized_scores(decisions, bounds):
@@ -107,14 +100,14 @@ def three_layer_inversions(decisions, scores, y_fresh, grade_thr=None):
 # OOD rates on val and test (threshold consistency check)
 # ─────────────────────────────────────────────────────────────
 
+def mahal(X, m, P):
+    diff = X - m
+    return np.sqrt(np.einsum('ij,jk,ik->i', diff, P, diff))
+
 def compute_ood_rates(vt, scaler, selected, scoring_config):
     train_mean      = np.load(os.path.join(MODEL_DIR, "train_mean.npy"))
     train_precision = np.load(os.path.join(MODEL_DIR, "train_precision.npy"))
     thresh_ood      = scoring_config["mahal_thresh_ood"]
-
-    def mahal(X, m, P):
-        diff = X - m
-        return np.sqrt(np.einsum('ij,jk,ik->i', diff, P, diff))
 
     rates = {}
     for split in ("val", "test"):
@@ -441,11 +434,8 @@ def main():
     conf_thresh     = scoring_config.get("veg_confidence_threshold", 0.70)
     gap_thresh_val  = scoring_config.get("veg_gap_threshold", 0.15)
 
-    def mahal_dists(Xf, m, P):
-        diff = Xf - m
-        return np.sqrt(np.einsum('ij,jk,ik->i', diff, P, diff))
 
-    dists       = mahal_dists(X, train_mean, train_precision)
+    dists       = mahal(X, train_mean, train_precision)
     is_ood_arr  = dists > thresh_ood
 
     sorted_p    = np.sort(veg_probs, axis=1)[:, ::-1]

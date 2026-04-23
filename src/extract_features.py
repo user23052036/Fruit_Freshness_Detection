@@ -3,7 +3,6 @@
 
 import numpy as np
 import cv2
-from typing import List
 
 # TensorFlow EfficientNet
 try:
@@ -128,44 +127,6 @@ def extract_handcrafted_from_array(img_rgb: np.ndarray) -> np.ndarray:
 
 
 # ----------------------------------------------------
-# Batch deep feature extraction
-# ----------------------------------------------------
-
-def extract_deep_batch(paths: List[str], batch_size: int = 32) -> np.ndarray:
-    """
-    Run EfficientNet inference in batches.
-    Returns (N,1280)
-    """
-
-    X_deep = []
-
-    n = len(paths)
-
-    for i in range(0, n, batch_size):
-
-        batch_paths = paths[i:i + batch_size]
-
-        batch_imgs = np.zeros(
-            (len(batch_paths), _DEEP_INPUT_SIZE[0], _DEEP_INPUT_SIZE[1], 3),
-            dtype=np.float32
-        )
-
-        for j, p in enumerate(batch_paths):
-            batch_imgs[j] = _read_rgb(p, _DEEP_INPUT_SIZE)
-
-        batch_pre = effnet_preprocess(batch_imgs)
-
-        preds = _DEEP_MODEL.predict(batch_pre, verbose=0)
-
-        X_deep.append(preds.astype(np.float32))
-
-    if len(X_deep) == 0:
-        return np.zeros((0, 1280), dtype=np.float32)
-
-    return np.vstack(X_deep)
-
-
-# ----------------------------------------------------
 # Single-image feature extraction
 # ----------------------------------------------------
 
@@ -197,6 +158,5 @@ __all__ = [
     "model",
     "preprocess_input",
     "extract_handcrafted",
-    "extract_deep_batch",
     "extract_features",
 ]
